@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; font-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"
+    />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Connection Switcher</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="app-header">
+        <div class="brand-mark" aria-hidden="true">
+          <img src="assets/icon.ico" alt="" />
+        </div>
+        <div>
+          <p class="eyebrow" data-i18n="utility">Windows network utility</p>
+          <h1 data-i18n="title">Connection Switcher</h1>
+          <p class="subtitle" data-i18n="subtitle">
+            Change network adapters without digging through Windows settings.
+          </p>
+        </div>
+      </header>
+
+      <section class="adapter-card" aria-labelledby="adapter-heading">
+        <div class="card-heading">
+          <div>
+            <p class="section-label" data-i18n="adapterLabel">
+              Network adapter
+            </p>
+            <h2 id="adapter-heading" data-i18n="chooseAdapter">
+              Choose an adapter
+            </h2>
+          </div>
+          <span id="connection-badge" class="status-badge status-unknown">
+            <span class="status-dot" aria-hidden="true"></span>
+            <span id="connection-status" data-i18n="loading">Loading…</span>
+          </span>
+        </div>
+
+        <label
+          class="select-label"
+          for="adapter-select"
+          data-i18n="adapterSelectLabel"
+        >
+          Available adapters
+        </label>
+        <div class="select-row">
+          <select id="adapter-select" disabled>
+            <option data-i18n="loading">Loading…</option>
+          </select>
+          <button
+            id="refresh-button"
+            class="icon-button"
+            type="button"
+            aria-label="Refresh"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5"
+              />
+            </svg>
+          </button>
+        </div>
+
+        <div id="adapter-details" class="adapter-details" hidden>
+          <p id="adapter-description" class="adapter-description"></p>
+          <p id="adapter-meta" class="adapter-meta"></p>
+        </div>
+
+        <div id="empty-state" class="empty-state" hidden>
+          <strong data-i18n="noAdapters">No network adapters found</strong>
+          <span data-i18n="noAdaptersHint"
+            >Connect or install an adapter, then refresh.</span
+          >
+        </div>
+
+        <div class="actions" id="adapter-actions">
+          <button
+            id="enable-button"
+            class="button button-primary"
+            type="button"
+            disabled
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 2v10M6.4 5.6a8 8 0 1 0 11.2 0" />
+            </svg>
+            <span data-i18n="enable">Enable adapter</span>
+          </button>
+          <button
+            id="disable-button"
+            class="button button-danger"
+            type="button"
+            disabled
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 2v10M6.4 5.6a8 8 0 1 0 11.2 0" />
+            </svg>
+            <span data-i18n="disable">Disable adapter</span>
+          </button>
+        </div>
+
+        <div id="recovery-panel" class="recovery-panel" hidden>
+          <div>
+            <strong data-i18n="recoveryTitle"
+              >Recovery protection is active</strong
+            >
+            <p id="recovery-summary"></p>
+          </div>
+          <button
+            id="restore-button"
+            class="button button-secondary"
+            type="button"
+          >
+            <span data-i18n="restoreNow">Restore now</span>
+          </button>
+        </div>
+
+        <div
+          id="feedback"
+          class="feedback"
+          role="status"
+          aria-live="polite"
+        ></div>
+      </section>
+
+      <aside class="notice">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path
+            d="M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20ZM12 10v6M12 7h.01"
+          />
+        </svg>
+        <p data-i18n="permissionNotice">
+          Windows asks for administrator permission only when an adapter is
+          changed.
+        </p>
+      </aside>
+
+      <footer>
+        <span id="app-version"></span>
+        <span aria-hidden="true">·</span>
+        <a
+          href="https://www.flaticon.com/free-icons/telephone-socket"
+          target="_blank"
+          rel="noopener noreferrer"
+          data-i18n="iconCredit"
+        >
+          Icon credit
+        </a>
+      </footer>
+    </main>
+
+    <script src="../dist/renderer/renderer.js" defer></script>
+  </body>
+</html>
