@@ -38,20 +38,33 @@ import {
 import { loadSelectedAdapterId, saveSelectedAdapterId } from './settings';
 
 const isSquirrelStartup = Boolean(require('electron-squirrel-startup'));
+app.setName('Cherry Toolbox');
 const hasSingleInstanceLock = isSquirrelStartup
   ? false
   : app.requestSingleInstanceLock();
 
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
 const INDEX_HTML_PATH = path.join(PROJECT_ROOT, 'static', 'index.html');
-const ICON_PATH = path.join(PROJECT_ROOT, 'static', 'assets', 'icon.ico');
+const ICON_PATH = path.join(
+  PROJECT_ROOT,
+  'static',
+  'assets',
+  'cherry-toolbox.ico',
+);
+const BRAND_IMAGE_PATH = path.join(
+  PROJECT_ROOT,
+  'static',
+  'assets',
+  'cherry-toolbox.png',
+);
 const START_HIDDEN_ARGUMENT = '--hidden';
-const APP_SCHEME = 'connection-switcher';
+const APP_SCHEME = 'cherry-toolbox';
 const APP_HOST = 'bundle';
 const INDEX_URL = `${APP_SCHEME}://${APP_HOST}/static/index.html`;
 const APP_RESOURCES = new Map<string, string>([
   ['/static/index.html', INDEX_HTML_PATH],
-  ['/static/assets/icon.ico', ICON_PATH],
+  ['/static/assets/cherry-toolbox.ico', ICON_PATH],
+  ['/static/assets/cherry-toolbox.png', BRAND_IMAGE_PATH],
   ['/static/styles.css', path.join(PROJECT_ROOT, 'static', 'styles.css')],
   [
     '/dist/renderer/renderer.js',
@@ -60,6 +73,30 @@ const APP_RESOURCES = new Map<string, string>([
   [
     '/dist/renderer/renderer.js.map',
     path.join(PROJECT_ROOT, 'dist', 'renderer', 'renderer.js.map'),
+  ],
+  [
+    '/dist/renderer/i18n.js',
+    path.join(PROJECT_ROOT, 'dist', 'renderer', 'i18n.js'),
+  ],
+  [
+    '/dist/renderer/i18n.js.map',
+    path.join(PROJECT_ROOT, 'dist', 'renderer', 'i18n.js.map'),
+  ],
+  [
+    '/dist/renderer/tools.js',
+    path.join(PROJECT_ROOT, 'dist', 'renderer', 'tools.js'),
+  ],
+  [
+    '/dist/renderer/tools.js.map',
+    path.join(PROJECT_ROOT, 'dist', 'renderer', 'tools.js.map'),
+  ],
+  [
+    '/dist/renderer/network-switcher.js',
+    path.join(PROJECT_ROOT, 'dist', 'renderer', 'network-switcher.js'),
+  ],
+  [
+    '/dist/renderer/network-switcher.js.map',
+    path.join(PROJECT_ROOT, 'dist', 'renderer', 'network-switcher.js.map'),
   ],
 ]);
 
@@ -83,18 +120,16 @@ let quitInProgress = false;
 let operationInProgress = false;
 let selectedAdapterId: string | null = null;
 let userDataDirectory = '';
-let refreshInProgress: Promise<AppState> | null = null;
+let refreshInProgress: Promise<NetworkSwitcherState> | null = null;
 let recoveryJournal: RecoveryJournal | null = null;
 let recoveryJournalLoadError: Error | null = null;
 let adapterMutationInFlight = false;
 const recoverySessionId = randomUUID();
 const connectionMonitors = new Map<string, AbortController>();
-let currentState: AppState = {
+let currentState: NetworkSwitcherState = {
   adapters: [],
   pendingRestoreCount: 0,
-  platform: 'win32',
   selectedAdapterId: null,
-  version: app.getVersion(),
 };
 
 interface TrayLabels {
@@ -102,6 +137,7 @@ interface TrayLabels {
   disable: string;
   enable: string;
   noAdapters: string;
+  networkSwitcher: string;
   quit: string;
   refresh: string;
   restore: string;
@@ -134,11 +170,12 @@ function trayLabels(): TrayLabels {
       disable: '禁用',
       enable: '启用',
       noAdapters: '未发现网卡',
+      networkSwitcher: '网络切换器',
       quit: '退出',
       refresh: '刷新',
       restore: '恢复更改',
       selected: '当前网卡',
-      show: '显示 Connection Switcher',
+      show: '显示 Cherry Toolbox',
     };
   }
   if (locale.startsWith('fr')) {
@@ -147,11 +184,12 @@ function trayLabels(): TrayLabels {
       disable: 'Désactiver',
       enable: 'Activer',
       noAdapters: 'Aucune carte réseau',
+      networkSwitcher: 'Sélecteur de connexion',
       quit: 'Quitter',
       refresh: 'Actualiser',
       restore: 'Restaurer les modifications',
       selected: 'Carte sélectionnée',
-      show: 'Afficher Connection Switcher',
+      show: 'Afficher Cherry Toolbox',
     };
   }
   return {
@@ -159,11 +197,12 @@ function trayLabels(): TrayLabels {
     disable: 'Disable',
     enable: 'Enable',
     noAdapters: 'No network adapters',
+    networkSwitcher: 'Network Switcher',
     quit: 'Quit',
     refresh: 'Refresh',
     restore: 'Restore changes',
     selected: 'Selected adapter',
-    show: 'Show Connection Switcher',
+    show: 'Show Cherry Toolbox',
   };
 }
 
@@ -232,7 +271,9 @@ function recoveryDialogLabels(): RecoveryDialogLabels {
   };
 }
 
-function selectedAdapter(state = currentState): NetworkAdapter | null {
+function selectedAdapter(
+  state: NetworkSwitcherState = currentState,
+): NetworkAdapter | null {
   return (
     state.adapters.find((adapter) => adapter.id === state.selectedAdapterId) ??
     null
@@ -256,7 +297,7 @@ function errorMessage(error: unknown): string {
 }
 
 function showError(error: unknown): void {
-  dialog.showErrorBox('Connection Switcher', errorMessage(error));
+  dialog.showErrorBox('Cherry Toolbox', errorMessage(error));
 }
 
 function pendingRestoreCount(): number {
@@ -295,7 +336,10 @@ async function discardRecoveryJournal(): Promise<void> {
 
 function notifyStateChanged(): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(IPC_CHANNELS.stateChanged, currentState);
+  mainWindow.webContents.send(
+    IPC_CHANNELS.networkSwitcherStateChanged,
+    currentState,
+  );
 }
 
 function stopConnectionMonitors(): void {
@@ -340,12 +384,7 @@ function rebuildTrayMenu(): void {
       }))
     : [{ enabled: false, label: labels.noAdapters }];
 
-  const template: MenuItemConstructorOptions[] = [
-    {
-      click: showMainWindow,
-      label: labels.show,
-    },
-    { type: 'separator' },
+  const networkSwitcherItems: MenuItemConstructorOptions[] = [
     {
       enabled: false,
       label: `${labels.selected}: ${selected?.name ?? '—'}`,
@@ -389,6 +428,18 @@ function rebuildTrayMenu(): void {
       enabled: pendingRestoreCount() > 0 && !operationInProgress,
       label: `${labels.restore}${pendingRestoreCount() > 0 ? ` (${pendingRestoreCount()})` : ''}`,
     },
+  ];
+
+  const template: MenuItemConstructorOptions[] = [
+    {
+      click: showMainWindow,
+      label: labels.show,
+    },
+    { type: 'separator' },
+    {
+      label: labels.networkSwitcher,
+      submenu: networkSwitcherItems,
+    },
     { type: 'separator' },
     {
       click: () => {
@@ -401,7 +452,7 @@ function rebuildTrayMenu(): void {
   tray.setContextMenu(Menu.buildFromTemplate(template));
 }
 
-async function refreshState(): Promise<AppState> {
+async function refreshState(): Promise<NetworkSwitcherState> {
   if (refreshInProgress) return refreshInProgress;
 
   refreshInProgress = (async () => {
@@ -416,9 +467,7 @@ async function refreshState(): Promise<AppState> {
     currentState = {
       adapters,
       pendingRestoreCount: pendingRestoreCount(),
-      platform: 'win32',
       selectedAdapterId,
-      version: app.getVersion(),
     };
     rebuildTrayMenu();
     return currentState;
@@ -429,7 +478,9 @@ async function refreshState(): Promise<AppState> {
   return refreshInProgress;
 }
 
-async function selectAdapter(adapterId: string): Promise<AppState> {
+async function selectAdapter(
+  adapterId: string,
+): Promise<NetworkSwitcherState> {
   if (!isSafeAdapterId(adapterId))
     throw new Error('Invalid network adapter identifier.');
 
@@ -449,7 +500,7 @@ async function selectAdapter(adapterId: string): Promise<AppState> {
 async function changeAdapterState(
   adapterId: string,
   action: AdapterAction,
-): Promise<AppState> {
+): Promise<NetworkSwitcherState> {
   if (!isSafeAdapterId(adapterId))
     throw new Error('Invalid network adapter identifier.');
   if (!isAdapterAction(action)) throw new Error('Unsupported adapter action.');
@@ -520,7 +571,7 @@ async function changeAdapterState(
   }
 }
 
-async function restoreTrackedAdapterStates(): Promise<AppState> {
+async function restoreTrackedAdapterStates(): Promise<NetworkSwitcherState> {
   if (recoveryJournalLoadError) throw recoveryJournalLoadError;
   if (operationInProgress)
     throw new Error('Another network adapter operation is still running.');
@@ -572,16 +623,23 @@ async function restoreTrackedAdapterStates(): Promise<AppState> {
 }
 
 function registerIpcHandlers(): void {
-  ipcMain.handle(IPC_CHANNELS.getState, async (event) => {
+  ipcMain.handle(IPC_CHANNELS.getAppInfo, (event): ToolboxAppInfo => {
+    assertTrustedSender(event);
+    return { platform: 'win32', version: app.getVersion() };
+  });
+  ipcMain.handle(IPC_CHANNELS.networkSwitcherGetState, async (event) => {
     assertTrustedSender(event);
     return refreshState();
   });
-  ipcMain.handle(IPC_CHANNELS.restoreAdapterStates, async (event) => {
-    assertTrustedSender(event);
-    return restoreTrackedAdapterStates();
-  });
   ipcMain.handle(
-    IPC_CHANNELS.selectAdapter,
+    IPC_CHANNELS.networkSwitcherRestoreAdapterStates,
+    async (event) => {
+      assertTrustedSender(event);
+      return restoreTrackedAdapterStates();
+    },
+  );
+  ipcMain.handle(
+    IPC_CHANNELS.networkSwitcherSelectAdapter,
     async (event, adapterId: unknown) => {
       assertTrustedSender(event);
       if (typeof adapterId !== 'string')
@@ -590,7 +648,7 @@ function registerIpcHandlers(): void {
     },
   );
   ipcMain.handle(
-    IPC_CHANNELS.setAdapterState,
+    IPC_CHANNELS.networkSwitcherSetAdapterState,
     async (event, adapterId: unknown, action: unknown) => {
       assertTrustedSender(event);
       if (typeof adapterId !== 'string')
@@ -605,7 +663,14 @@ function registerIpcHandlers(): void {
 function isAllowedExternalUrl(rawUrl: string): boolean {
   try {
     const url = new URL(rawUrl);
-    return url.protocol === 'https:' && url.hostname === 'www.flaticon.com';
+    return (
+      url.search === '' &&
+      url.hash === '' &&
+      (url.href ===
+        'https://github.com/Oriental-Cherry-N/cherry-toolbox' ||
+        url.href ===
+          'https://github.com/Oriental-Cherry-N/cherry-toolbox/blob/main/LICENSE')
+    );
   } catch {
     return false;
   }
@@ -614,13 +679,13 @@ function isAllowedExternalUrl(rawUrl: string): boolean {
 function createMainWindow(): void {
   const window = new BrowserWindow({
     autoHideMenuBar: true,
-    backgroundColor: '#0b1220',
-    height: 620,
+    backgroundColor: '#120b11',
+    height: 680,
     icon: ICON_PATH,
-    minHeight: 540,
-    minWidth: 640,
+    minHeight: 560,
+    minWidth: 760,
     show: false,
-    title: 'Connection Switcher',
+    title: 'Cherry Toolbox',
     webPreferences: {
       contextIsolation: true,
       devTools: !app.isPackaged,
@@ -629,7 +694,7 @@ function createMainWindow(): void {
       sandbox: true,
       webSecurity: true,
     },
-    width: 760,
+    width: 980,
   });
 
   mainWindow = window;
@@ -660,7 +725,7 @@ function createMainWindow(): void {
 function createTray(): void {
   if (tray && !tray.isDestroyed()) return;
   tray = new Tray(ICON_PATH);
-  tray.setToolTip('Connection Switcher');
+  tray.setToolTip('Cherry Toolbox');
   tray.on('click', showMainWindow);
   rebuildTrayMenu();
 }
@@ -803,17 +868,20 @@ async function startApplication(): Promise<void> {
   if (process.platform !== 'win32') {
     dialog.showErrorBox(
       'Incompatible OS',
-      'Connection Switcher supports Windows only.',
+      'Cherry Toolbox supports Windows only.',
     );
     app.quit();
     return;
   }
 
-  app.setAppUserModelId('com.nzosifou.connection-switcher');
+  app.setAppUserModelId('io.github.orientalcherryn.cherrytoolbox');
   Menu.setApplicationMenu(null);
   configureAppProtocol();
   configureSessionSecurity();
-  userDataDirectory = app.getPath('userData');
+  userDataDirectory = path.join(
+    app.getPath('userData'),
+    'network-switcher',
+  );
   selectedAdapterId = await loadSelectedAdapterId(userDataDirectory);
   try {
     recoveryJournal = await loadRecoveryJournal(userDataDirectory);

@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "ES2022",
+    "moduleDetection": "force",
+    "moduleResolution": "Bundler",
+    "types": [],
+    "lib": ["ES2022", "DOM"],
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": ["src/common/types.d.ts", "src/renderer/**/*.ts"],
+  "exclude": ["node_modules", "dist", "out", "test"]
+}

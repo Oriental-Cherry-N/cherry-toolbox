@@ -11,25 +11,37 @@ interface NetworkAdapter {
   connected: boolean | null;
 }
 
-interface AppState {
+interface NetworkSwitcherState {
   adapters: NetworkAdapter[];
   pendingRestoreCount: number;
   selectedAdapterId: string | null;
+}
+
+interface ToolboxAppInfo {
   version: string;
   platform: 'win32';
 }
 
-interface ConnectionSwitcherApi {
-  getState: () => Promise<AppState>;
-  restoreAdapterStates: () => Promise<AppState>;
-  selectAdapter: (adapterId: string) => Promise<AppState>;
+interface NetworkSwitcherApi {
+  getState: () => Promise<NetworkSwitcherState>;
+  restoreAdapterStates: () => Promise<NetworkSwitcherState>;
+  selectAdapter: (adapterId: string) => Promise<NetworkSwitcherState>;
   setAdapterState: (
     adapterId: string,
     action: AdapterAction,
-  ) => Promise<AppState>;
-  onStateChanged: (callback: (state: AppState) => void) => () => void;
+  ) => Promise<NetworkSwitcherState>;
+  onStateChanged: (
+    callback: (state: NetworkSwitcherState) => void,
+  ) => () => void;
+}
+
+interface CherryToolboxApi {
+  app: {
+    getInfo: () => Promise<ToolboxAppInfo>;
+  };
+  networkSwitcher: NetworkSwitcherApi;
 }
 
 interface Window {
-  connectionSwitcher: ConnectionSwitcherApi;
+  cherryToolbox: CherryToolboxApi;
 }

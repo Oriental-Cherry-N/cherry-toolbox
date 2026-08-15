@@ -8,152 +8,257 @@
     />
     <meta name="color-scheme" content="dark light" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Connection Switcher</title>
+    <title>Cherry Toolbox</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <main class="app-shell">
-      <header class="app-header">
-        <div class="brand-mark" aria-hidden="true">
-          <img src="assets/icon.ico" alt="" />
-        </div>
-        <div>
-          <p class="eyebrow" data-i18n="utility">Windows network utility</p>
-          <h1 data-i18n="title">Connection Switcher</h1>
-          <p class="subtitle" data-i18n="subtitle">
-            Change network adapters without digging through Windows settings.
-          </p>
-        </div>
-      </header>
-
-      <section class="adapter-card" aria-labelledby="adapter-heading">
-        <div class="card-heading">
-          <div>
-            <p class="section-label" data-i18n="adapterLabel">
-              Network adapter
-            </p>
-            <h2 id="adapter-heading" data-i18n="chooseAdapter">
-              Choose an adapter
-            </h2>
-          </div>
-          <span id="connection-badge" class="status-badge status-unknown">
-            <span class="status-dot" aria-hidden="true"></span>
-            <span id="connection-status" data-i18n="loading">Loading…</span>
-          </span>
-        </div>
-
-        <label
-          class="select-label"
-          for="adapter-select"
-          data-i18n="adapterSelectLabel"
-        >
-          Available adapters
-        </label>
-        <div class="select-row">
-          <select id="adapter-select" disabled>
-            <option data-i18n="loading">Loading…</option>
-          </select>
-          <button
-            id="refresh-button"
-            class="icon-button"
-            type="button"
-            aria-label="Refresh"
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path
-                d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5"
-              />
-            </svg>
-          </button>
-        </div>
-
-        <div id="adapter-details" class="adapter-details" hidden>
-          <p id="adapter-description" class="adapter-description"></p>
-          <p id="adapter-meta" class="adapter-meta"></p>
-        </div>
-
-        <div id="empty-state" class="empty-state" hidden>
-          <strong data-i18n="noAdapters">No network adapters found</strong>
-          <span data-i18n="noAdaptersHint"
-            >Connect or install an adapter, then refresh.</span
-          >
-        </div>
-
-        <div class="actions" id="adapter-actions">
-          <button
-            id="enable-button"
-            class="button button-primary"
-            type="button"
-            disabled
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M12 2v10M6.4 5.6a8 8 0 1 0 11.2 0" />
-            </svg>
-            <span data-i18n="enable">Enable adapter</span>
-          </button>
-          <button
-            id="disable-button"
-            class="button button-danger"
-            type="button"
-            disabled
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M12 2v10M6.4 5.6a8 8 0 1 0 11.2 0" />
-            </svg>
-            <span data-i18n="disable">Disable adapter</span>
-          </button>
-        </div>
-
-        <div id="recovery-panel" class="recovery-panel" hidden>
-          <div>
-            <strong data-i18n="recoveryTitle"
-              >Recovery protection is active</strong
-            >
-            <p id="recovery-summary"></p>
-          </div>
-          <button
-            id="restore-button"
-            class="button button-secondary"
-            type="button"
-          >
-            <span data-i18n="restoreNow">Restore now</span>
-          </button>
-        </div>
-
-        <div
-          id="feedback"
-          class="feedback"
-          role="status"
-          aria-live="polite"
-        ></div>
-      </section>
-
-      <aside class="notice">
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path
-            d="M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20ZM12 10v6M12 7h.01"
+    <div class="toolbox-shell">
+      <aside class="sidebar" aria-label="Cherry Toolbox">
+        <div class="brand">
+          <img
+            class="brand-icon"
+            src="assets/cherry-toolbox.png"
+            alt=""
+            aria-hidden="true"
           />
-        </svg>
-        <p data-i18n="permissionNotice">
-          Windows asks for administrator permission only when an adapter is
-          changed.
-        </p>
+          <div class="brand-copy">
+            <strong data-i18n="toolboxName">Cherry Toolbox</strong>
+            <span data-i18n="toolboxTagline">Small tools. One home.</span>
+          </div>
+        </div>
+
+        <nav class="tool-navigation" aria-label="Tools">
+          <button
+            id="nav-home"
+            class="navigation-item is-active"
+            type="button"
+            aria-current="page"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="m3 11 9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1Z" />
+            </svg>
+            <span data-i18n="home">Home</span>
+          </button>
+          <button
+            id="nav-network-switcher"
+            class="navigation-item"
+            type="button"
+            aria-current="false"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M5 7h14M5 17h14M8 4 5 7l3 3M16 14l3 3-3 3" />
+            </svg>
+            <span data-i18n="networkSwitcher">Network Switcher</span>
+          </button>
+        </nav>
+
+        <footer class="sidebar-footer">
+          <span id="app-version"></span>
+          <div class="footer-links">
+            <a
+              href="https://github.com/Oriental-Cherry-N/cherry-toolbox"
+              target="_blank"
+              rel="noopener noreferrer"
+              data-i18n="repository"
+              >GitHub repository</a
+            >
+            <a
+              href="https://github.com/Oriental-Cherry-N/cherry-toolbox/blob/main/LICENSE"
+              target="_blank"
+              rel="noopener noreferrer"
+              data-i18n="license"
+              >GPL-3.0 license</a
+            >
+          </div>
+        </footer>
       </aside>
 
-      <footer>
-        <span id="app-version"></span>
-        <span aria-hidden="true">·</span>
-        <a
-          href="https://www.flaticon.com/free-icons/telephone-socket"
-          target="_blank"
-          rel="noopener noreferrer"
-          data-i18n="iconCredit"
-        >
-          Icon credit
-        </a>
-      </footer>
-    </main>
+      <main class="workspace">
+        <section id="view-home" class="tool-view home-view">
+          <header class="home-hero">
+            <div>
+              <p class="eyebrow" data-i18n="homeEyebrow">
+                Personal Windows utilities
+              </p>
+              <h1 data-i18n="homeTitle">Your useful things, together.</h1>
+              <p class="hero-copy" data-i18n="homeIntro">
+                One calm place for the small tools you use often. Start with
+                Network Switcher and grow the toolbox when you need it.
+              </p>
+            </div>
+            <img
+              class="hero-icon"
+              src="assets/cherry-toolbox.png"
+              alt=""
+              aria-hidden="true"
+            />
+          </header>
 
-    <script src="../dist/renderer/renderer.js" defer></script>
+          <section aria-labelledby="tools-heading">
+            <h2 id="tools-heading" class="content-heading" data-i18n="toolsHeading">
+              Available tools
+            </h2>
+            <div class="tool-grid">
+              <article class="tool-card tool-card-featured">
+                <div class="tool-card-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24">
+                    <path d="M5 7h14M5 17h14M8 4 5 7l3 3M16 14l3 3-3 3" />
+                  </svg>
+                </div>
+                <div class="tool-card-copy">
+                  <h3 data-i18n="networkCardTitle">Network Switcher</h3>
+                  <p data-i18n="networkCardDescription">
+                    View, enable, disable, and safely restore Windows network
+                    adapters.
+                  </p>
+                </div>
+                <button
+                  class="button button-primary tool-card-action"
+                  type="button"
+                  data-open-tool="network-switcher"
+                >
+                  <span data-i18n="openTool">Open tool</span>
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="m9 18 6-6-6-6" />
+                  </svg>
+                </button>
+              </article>
+
+              <article class="tool-card tool-card-future">
+                <div class="future-mark" aria-hidden="true">+</div>
+                <div class="tool-card-copy">
+                  <h3 data-i18n="futureTitle">More tools are coming</h3>
+                  <p data-i18n="futureDescription">
+                    New everyday utilities will appear here over time.
+                  </p>
+                </div>
+              </article>
+            </div>
+          </section>
+        </section>
+
+        <section id="view-network-switcher" class="tool-view" hidden>
+          <header class="module-header">
+            <p class="eyebrow" data-i18n="moduleEyebrow">Network utility</p>
+            <h1 data-i18n="title">Network Switcher</h1>
+            <p class="module-subtitle" data-i18n="subtitle">
+              Change network adapters without digging through Windows settings.
+            </p>
+          </header>
+
+          <section class="adapter-card" aria-labelledby="adapter-heading">
+            <div class="card-heading">
+              <div>
+                <p class="section-label" data-i18n="adapterLabel">
+                  Network adapter
+                </p>
+                <h2 id="adapter-heading" data-i18n="chooseAdapter">
+                  Choose an adapter
+                </h2>
+              </div>
+              <span id="connection-badge" class="status-badge status-unknown">
+                <span class="status-dot" aria-hidden="true"></span>
+                <span id="connection-status" data-i18n="loading">Loading…</span>
+              </span>
+            </div>
+
+            <label
+              class="select-label"
+              for="adapter-select"
+              data-i18n="adapterSelectLabel"
+            >
+              Available adapters
+            </label>
+            <div class="select-row">
+              <select id="adapter-select" disabled>
+                <option data-i18n="loading">Loading…</option>
+              </select>
+              <button
+                id="refresh-button"
+                class="icon-button"
+                type="button"
+                aria-label="Refresh"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5" />
+                </svg>
+              </button>
+            </div>
+
+            <div id="adapter-details" class="adapter-details" hidden>
+              <p id="adapter-description" class="adapter-description"></p>
+              <p id="adapter-meta" class="adapter-meta"></p>
+            </div>
+
+            <div id="empty-state" class="empty-state" hidden>
+              <strong data-i18n="noAdapters">No network adapters found</strong>
+              <span data-i18n="noAdaptersHint">
+                Connect or install an adapter, then refresh.
+              </span>
+            </div>
+
+            <div class="actions" id="adapter-actions">
+              <button
+                id="enable-button"
+                class="button button-primary"
+                type="button"
+                disabled
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 2v10M6.4 5.6a8 8 0 1 0 11.2 0" />
+                </svg>
+                <span data-i18n="enable">Enable adapter</span>
+              </button>
+              <button
+                id="disable-button"
+                class="button button-danger"
+                type="button"
+                disabled
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 2v10M6.4 5.6a8 8 0 1 0 11.2 0" />
+                </svg>
+                <span data-i18n="disable">Disable adapter</span>
+              </button>
+            </div>
+
+            <div id="recovery-panel" class="recovery-panel" hidden>
+              <div>
+                <strong data-i18n="recoveryTitle">
+                  Recovery protection is active
+                </strong>
+                <p id="recovery-summary"></p>
+              </div>
+              <button
+                id="restore-button"
+                class="button button-secondary"
+                type="button"
+              >
+                <span data-i18n="restoreNow">Restore now</span>
+              </button>
+            </div>
+
+            <div
+              id="feedback"
+              class="feedback"
+              role="status"
+              aria-live="polite"
+            ></div>
+          </section>
+
+          <aside class="notice">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20ZM12 10v6M12 7h.01" />
+            </svg>
+            <p data-i18n="permissionNotice">
+              Windows asks for administrator permission only when an adapter is
+              changed.
+            </p>
+          </aside>
+        </section>
+      </main>
+    </div>
+
+    <script type="module" src="../dist/renderer/renderer.js"></script>
   </body>
 </html>

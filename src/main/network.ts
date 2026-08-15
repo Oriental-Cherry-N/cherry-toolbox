@@ -303,7 +303,7 @@ export function resolveSelectedAdapterId(
 
 export async function listNetworkAdapters(): Promise<NetworkAdapter[]> {
   if (process.platform !== 'win32') {
-    throw new Error('Connection Switcher supports Windows only.');
+    throw new Error('Cherry Toolbox supports Windows only.');
   }
 
   try {

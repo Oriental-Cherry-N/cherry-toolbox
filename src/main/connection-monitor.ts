@@ -15,8 +15,8 @@ function defaultSleep(milliseconds: number): Promise<void> {
 
 export async function watchAdapterConnection(
   adapterId: string,
-  readState: () => Promise<AppState>,
-  onState: (state: AppState) => void,
+  readState: () => Promise<NetworkSwitcherState>,
+  onState: (state: NetworkSwitcherState) => void,
   options: ConnectionWatchOptions = {},
 ): Promise<ConnectionWatchResult> {
   const attempts = options.attempts ?? 45;

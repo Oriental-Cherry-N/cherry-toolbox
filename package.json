@@ -1,12 +1,15 @@
 {
-  "name": "connection-switcher",
-  "productName": "Connection Switcher",
-  "version": "1.0.0",
-  "description": "A small Windows utility for safely enabling and disabling network adapters.",
+  "name": "cherry-toolbox",
+  "productName": "Cherry Toolbox",
+  "version": "0.1.0",
+  "description": "A personal Windows toolbox, starting with safe network adapter switching.",
   "main": "dist/main/main.js",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "npm run build:main && npm run build:renderer",
+    "build:icon": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/generate-icon.ps1",
+    "build:main": "tsc -p tsconfig.json",
+    "build:renderer": "tsc -p tsconfig.renderer.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
     "test": "npm run build && node --test test/build-contract.test.js test/connection-monitor.test.js test/network.test.js test/recovery.test.js test/settings.test.js",
     "verify": "npm run typecheck && npm test",
     "start": "npm run build && electron-forge start",
@@ -16,22 +19,27 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/NzoSifou/connection-switcher.git"
+    "url": "git+https://github.com/Oriental-Cherry-N/cherry-toolbox.git"
   },
   "keywords": [
+    "toolbox",
+    "windows",
     "connection",
     "network",
     "adapter",
     "ethernet",
-    "wifi",
-    "windows"
+    "wifi"
   ],
-  "author": "NzoSifou",
+  "author": "Cherry Toolbox contributors",
+  "contributors": [
+    "NzoSifou",
+    "Oriental-Cherry-N"
+  ],
   "license": "GPL-3.0-or-later",
   "bugs": {
-    "url": "https://github.com/NzoSifou/connection-switcher/issues"
+    "url": "https://github.com/Oriental-Cherry-N/cherry-toolbox/issues"
   },
-  "homepage": "https://github.com/NzoSifou/connection-switcher#readme",
+  "homepage": "https://github.com/Oriental-Cherry-N/cherry-toolbox#readme",
   "engines": {
     "node": ">=22.12.0"
   },
