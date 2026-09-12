@@ -20,6 +20,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: node scripts/setup-routing-core.cjs
-      - run: npm run verify
+      - name: Verify without administrator privileges
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ci-verify.ps1
       - run: python test/wechat_worker_passive_test.py
       - run: npm run package

@@ -5,7 +5,7 @@
   "description": "A personal Windows toolbox, starting with safe network adapter switching.",
   "main": "dist/main/main.js",
   "scripts": {
-    "postinstall": "node scripts/harden-build-dependencies.cjs",
+    "postinstall": "node scripts/harden-build-dependencies.cjs && node node_modules/electron/install.js",
     "prebuild": "node scripts/harden-build-dependencies.cjs",
     "build": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-source.ps1",
     "build:native": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-native.ps1",
