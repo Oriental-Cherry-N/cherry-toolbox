@@ -12,3 +12,22 @@ distributed under the GNU General Public License, version 3 or any later
 version. See LICENSE for the full license text.
 
 The Cherry Toolbox brand artwork was created specifically for this project.
+
+The optional WeChat Auto Reply source workflow uses pywechat/pyweixin by
+Hello-Mr-Crab at runtime. The dependency is installed from upstream commit
+109724b7b9d50b0914d33b778caf220415f10360 and is licensed under the GNU Lesser
+General Public License, version 2.1 or any later version:
+
+https://github.com/Hello-Mr-Crab/pywechat
+
+The optional dedicated routing core is the unmodified Windows build of Mihomo
+v1.19.30 by MetaCubeX and contributors, licensed under GPL-3.0. Its corresponding
+source, build instructions and license are available at:
+https://github.com/MetaCubeX/mihomo/tree/v1.19.30
+https://github.com/MetaCubeX/mihomo/blob/v1.19.30/LICENSE
+Distributors must provide the corresponding source as required by the GPL;
+an upstream URL alone is not a substitute for those distribution obligations.
+
+The build workflow applies a local security mitigation to extract-zip 2.0.1
+(BSD-2-Clause): ZIP symlinks and overwriting files are rejected. The original
+package license and attribution remain in node_modules/extract-zip/LICENSE.

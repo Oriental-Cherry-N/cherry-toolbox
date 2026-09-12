@@ -39,6 +39,7 @@ build/Release
 
 # Dependency directories
 node_modules/
+.implementation-backups/
 jspm_packages/
 
 # TypeScript v1 declaration files
@@ -110,9 +111,15 @@ dist
 # Build
 out/
 dist/
+native/bin/
+src/main/native-manifest.ts
 
 # Local scratch files
 .tmp/
 .pnpm-store/
+.python-envs/
+__pycache__/
+*.py[cod]
 pnpm-lock.yaml
 *.tmp
+/Cherry Toolbox.lnk

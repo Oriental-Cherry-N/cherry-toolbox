@@ -1,6 +1,14 @@
 import { t, type TranslationKey } from './i18n.js';
 
-type ToolId = 'home' | 'network-switcher';
+type ToolId =
+  | 'home'
+  | 'network-switcher'
+  | 'split-routing'
+  | 'wechat-auto-reply';
+
+function componentForTool(toolId: ToolId): ToolboxComponentId | null {
+  return toolId === 'home' ? null : toolId;
+}
 
 interface ToolDefinition {
   id: ToolId;
@@ -22,9 +30,21 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
     navigationId: 'nav-network-switcher',
     viewId: 'view-network-switcher',
   },
+  {
+    id: 'split-routing',
+    label: 'splitRouting',
+    navigationId: 'nav-split-routing',
+    viewId: 'view-split-routing',
+  },
+  {
+    id: 'wechat-auto-reply',
+    label: 'wechatAutoReply',
+    navigationId: 'nav-wechat-auto-reply',
+    viewId: 'view-wechat-auto-reply',
+  },
 ];
 
-function activateTool(toolId: ToolId): void {
+function showTool(toolId: ToolId): void {
   for (const tool of TOOL_DEFINITIONS) {
     const active = tool.id === toolId;
     const navigation = document.getElementById(tool.navigationId);
@@ -42,15 +62,64 @@ function activateTool(toolId: ToolId): void {
   if (activeTool) document.title = `Cherry Toolbox — ${t(activeTool.label)}`;
 }
 
+function friendlyError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace(
+    /^Error invoking remote method '[^']+': Error:\s*/u,
+    '',
+  );
+}
+
 export function initializeToolNavigation(): () => void {
   const cleanups: Array<() => void> = [];
+  const transitionStatus = document.getElementById('component-transition');
+  if (!transitionStatus) throw new Error('The component transition status is missing.');
+  let activeToolId: ToolId = 'home';
+  let navigationInProgress = false;
+
+  const navigate = async (toolId: ToolId): Promise<void> => {
+    if (navigationInProgress || toolId === activeToolId) return;
+    navigationInProgress = true;
+    const currentView = document.getElementById(`view-${activeToolId}`);
+    currentView?.setAttribute('aria-busy', 'true');
+    const progressTimer = window.setTimeout(() => {
+      transitionStatus.textContent = t('componentLeaving');
+      transitionStatus.hidden = false;
+    }, 150);
+    for (const tool of TOOL_DEFINITIONS) {
+      const navigation = document.getElementById(tool.navigationId);
+      if (navigation instanceof HTMLButtonElement) navigation.disabled = true;
+    }
+    try {
+      const currentComponent = componentForTool(activeToolId);
+      if (currentComponent) {
+        await window.cherryToolbox.app.leaveComponent(currentComponent);
+      }
+      activeToolId = toolId;
+      showTool(toolId);
+    } catch (error) {
+      window.alert(
+        t('componentLeaveFailed', { message: friendlyError(error) }),
+      );
+    } finally {
+      window.clearTimeout(progressTimer);
+      transitionStatus.hidden = true;
+      transitionStatus.textContent = '';
+      currentView?.removeAttribute('aria-busy');
+      navigationInProgress = false;
+      for (const tool of TOOL_DEFINITIONS) {
+        const navigation = document.getElementById(tool.navigationId);
+        if (navigation instanceof HTMLButtonElement) navigation.disabled = false;
+      }
+    }
+  };
 
   for (const tool of TOOL_DEFINITIONS) {
     const navigation = document.getElementById(tool.navigationId);
     if (!(navigation instanceof HTMLButtonElement)) {
       throw new Error(`Navigation button #${tool.navigationId} is missing.`);
     }
-    const listener = (): void => activateTool(tool.id);
+    const listener = (): void => void navigate(tool.id);
     navigation.addEventListener('click', listener);
     cleanups.push(() => navigation.removeEventListener('click', listener));
   }
@@ -62,12 +131,12 @@ export function initializeToolNavigation(): () => void {
       (candidate) => candidate.id === button.dataset.openTool,
     );
     if (!tool) continue;
-    const listener = (): void => activateTool(tool.id);
+    const listener = (): void => void navigate(tool.id);
     button.addEventListener('click', listener);
     cleanups.push(() => button.removeEventListener('click', listener));
   }
 
-  activateTool('home');
+  showTool('home');
   return () => {
     for (const cleanup of cleanups) cleanup();
   };

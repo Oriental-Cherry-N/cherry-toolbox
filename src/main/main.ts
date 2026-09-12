@@ -7,6 +7,7 @@ import {
   Menu,
   type MenuItemConstructorOptions,
   net,
+  powerMonitor,
   protocol,
   session,
   shell,
@@ -14,28 +15,39 @@ import {
   type WebFrameMain,
 } from 'electron';
 import { randomUUID } from 'node:crypto';
+import { cleanupAll } from './lifecycle';
+import { nativeHelperDiagnostics } from './native-helper';
 import { pathToFileURL } from 'node:url';
 import path from 'node:path';
 
 import { IPC_CHANNELS } from '../common/channels';
+import { AdapterRecoveryBroker } from './structured-adapter-broker';
 import { watchAdapterConnection } from './connection-monitor';
 import {
   isAdapterAction,
   isSafeAdapterId,
   listNetworkAdapters,
   resolveSelectedAdapterId,
-  setNetworkAdapterState,
   setNetworkAdapterStates,
 } from './network';
 import {
   buildRecoveryPlan,
   loadRecoveryJournal,
+  recoveryJournalHealth,
+  pendingRecoveryCount,
   reconcileRecoveryJournal,
   saveRecoveryJournal,
   trackAdapterChange,
   type RecoveryJournal,
 } from './recovery';
-import { loadSelectedAdapterId, saveSelectedAdapterId } from './settings';
+import { loadSelectedAdapterId } from './settings';
+import {
+  assertAdapterMutationIsSafe,
+  inspectProtectedNetworkClients,
+} from './safety-guard';
+import { SplitRoutingService } from './split-routing';
+import { DEFAULT_SPLIT_ROUTING_SETTINGS } from './split-routing-settings';
+import { WeChatAutoReplyService } from './wechat-auto-reply';
 
 const isSquirrelStartup = Boolean(require('electron-squirrel-startup'));
 app.setName('Cherry Toolbox');
@@ -98,6 +110,22 @@ const APP_RESOURCES = new Map<string, string>([
     '/dist/renderer/network-switcher.js.map',
     path.join(PROJECT_ROOT, 'dist', 'renderer', 'network-switcher.js.map'),
   ],
+  [
+    '/dist/renderer/safety.js',
+    path.join(PROJECT_ROOT, 'dist', 'renderer', 'safety.js'),
+  ],
+  [
+    '/dist/renderer/safety.js.map',
+    path.join(PROJECT_ROOT, 'dist', 'renderer', 'safety.js.map'),
+  ],
+  [
+    '/dist/renderer/wechat-auto-reply.js',
+    path.join(PROJECT_ROOT, 'dist', 'renderer', 'wechat-auto-reply.js'),
+  ],
+  [
+    '/dist/renderer/wechat-auto-reply.js.map',
+    path.join(PROJECT_ROOT, 'dist', 'renderer', 'wechat-auto-reply.js.map'),
+  ],
 ]);
 
 protocol.registerSchemesAsPrivileged([
@@ -118,18 +146,38 @@ let isQuitting = false;
 let quitApproved = false;
 let quitInProgress = false;
 let operationInProgress = false;
+let cleanupInProgress: Promise<void> | null = null;
+let recoveryHealth: ToolboxSafetyState['recoveryHealth'] = 'blocked';
+let protectedClientCheckSucceeded = false;
 let selectedAdapterId: string | null = null;
 let userDataDirectory = '';
 let refreshInProgress: Promise<NetworkSwitcherState> | null = null;
 let recoveryJournal: RecoveryJournal | null = null;
 let recoveryJournalLoadError: Error | null = null;
 let adapterMutationInFlight = false;
+let adapterRecoveryBroker: AdapterRecoveryBroker | null = null;
+let adapterRecoveryBrokerError: Error | null = null;
+let windowCloseCleanupInProgress = false;
+let weChatAutoReplyService: WeChatAutoReplyService | null = null;
+let splitRoutingService: SplitRoutingService | null = null;
+let weChatSafetyHandlersRegistered = false;
 const recoverySessionId = randomUUID();
 const connectionMonitors = new Map<string, AbortController>();
 let currentState: NetworkSwitcherState = {
   adapters: [],
   pendingRestoreCount: 0,
   selectedAdapterId: null,
+  splitRouting: {
+    activePacUrl: null,
+    diagnostics: [],
+    environmentProxyWarning: false,
+    lastError: null,
+    mixedPort: null,
+    ownedRouteCount: 0,
+    pendingRecovery: false,
+    settings: { ...DEFAULT_SPLIT_ROUTING_SETTINGS },
+    status: 'inactive',
+  },
 };
 
 interface TrayLabels {
@@ -149,13 +197,8 @@ interface RecoveryDialogLabels {
   cancel: string;
   damagedMessage: string;
   damagedTitle: string;
-  discard: string;
   crashMessage: string;
   crashTitle: string;
-  keep: string;
-  keepAndExit: string;
-  later: string;
-  quit: string;
   restore: string;
   restoreFailedMessage: string;
   restoreFailedTitle: string;
@@ -212,19 +255,14 @@ function recoveryDialogLabels(): RecoveryDialogLabels {
     return {
       cancel: '取消',
       damagedMessage:
-        '恢复记录已损坏，无法安全判断原始网卡状态。可以保留当前网卡状态并删除损坏的记录，或退出程序。',
+        '所有恢复记录副本均无法读取。文件将原样保留，所有变更功能已锁定；请先使用安全恢复中心处理。',
       damagedTitle: '无法读取恢复记录',
-      discard: '保留当前状态并删除记录',
       crashMessage:
-        '检测到上次运行留下的网卡状态更改。是否恢复到更改前的状态？',
+        '检测到上次运行留下的网络更改，程序将立即尝试恢复。',
       crashTitle: '发现未完成的恢复记录',
-      keep: '保留当前状态',
-      keepAndExit: '保留更改并退出',
-      later: '稍后处理',
-      quit: '退出程序',
       restore: '立即恢复',
       restoreFailedMessage:
-        '部分网卡未能恢复。恢复记录仍已保留，可以重试或保留当前状态。',
+        '部分网络更改未能恢复。恢复记录和恢复守护仍会保留；安全退出将被拒绝。',
       restoreFailedTitle: '网卡恢复未完成',
       retry: '重试',
     };
@@ -233,16 +271,11 @@ function recoveryDialogLabels(): RecoveryDialogLabels {
     return {
       cancel: 'Annuler',
       damagedMessage:
-        "Le journal de récupération est endommagé. Conservez l'état actuel et supprimez-le, ou quittez l'application.",
+        "Toutes les copies du journal sont illisibles. Elles sont conservées et toutes les mutations sont verrouillées.",
       damagedTitle: 'Journal de récupération illisible',
-      discard: "Conserver l'état et supprimer",
       crashMessage:
-        "Des modifications de cartes réseau d'une session précédente restent à restaurer.",
+        "Des modifications d'une session précédente seront restaurées immédiatement.",
       crashTitle: 'Récupération inachevée détectée',
-      keep: "Conserver l'état actuel",
-      keepAndExit: 'Conserver et quitter',
-      later: 'Plus tard',
-      quit: 'Quitter',
       restore: 'Restaurer maintenant',
       restoreFailedMessage:
         "Certaines cartes n'ont pas pu être restaurées. Le journal a été conservé.",
@@ -253,19 +286,14 @@ function recoveryDialogLabels(): RecoveryDialogLabels {
   return {
     cancel: 'Cancel',
     damagedMessage:
-      'The recovery journal is damaged, so the original adapter state cannot be determined safely. Keep the current state and discard the journal, or quit.',
+      'Every redundant recovery copy is unreadable. The files were preserved and all mutation features are locked until recovery is resolved.',
     damagedTitle: 'Recovery journal could not be read',
-    discard: 'Keep state and discard',
     crashMessage:
-      'Network adapter changes from the previous session are still pending. Restore them now?',
+      'Changes from the previous session are pending and will be restored immediately.',
     crashTitle: 'Unfinished recovery detected',
-    keep: 'Keep current state',
-    keepAndExit: 'Keep changes and quit',
-    later: 'Later',
-    quit: 'Quit',
     restore: 'Restore now',
     restoreFailedMessage:
-      'Some adapters could not be restored. The recovery journal was kept.',
+      'Some network changes could not be restored. The recovery journal was kept.',
     restoreFailedTitle: 'Recovery incomplete',
     retry: 'Retry',
   };
@@ -301,13 +329,23 @@ function showError(error: unknown): void {
 }
 
 function pendingRestoreCount(): number {
-  return recoveryJournal?.adapters.length ?? 0;
+  return pendingRecoveryCount(recoveryJournal);
+}
+
+function pendingRecoveryDetails(): string {
+  return [
+    ...(recoveryJournal?.adapters.map((record) => record.adapterName) ?? []),
+    ...(recoveryJournal?.splitRouting
+      ? ['Website split routing (PAC, FlClash, and WLAN routes)']
+      : []),
+  ].join('\n');
 }
 
 function applyRecoveryMetadata(): void {
   currentState = {
     ...currentState,
     pendingRestoreCount: pendingRestoreCount(),
+    splitRouting: splitRoutingService?.getState() ?? currentState.splitRouting,
   };
 }
 
@@ -316,6 +354,7 @@ async function replaceRecoveryJournal(
 ): Promise<void> {
   await saveRecoveryJournal(userDataDirectory, nextJournal);
   recoveryJournal = nextJournal;
+  recoveryHealth = await recoveryJournalHealth(userDataDirectory);
   applyRecoveryMetadata();
 }
 
@@ -328,18 +367,59 @@ async function reconcileTrackedChanges(
     await replaceRecoveryJournal(nextJournal);
 }
 
-async function discardRecoveryJournal(): Promise<void> {
-  await replaceRecoveryJournal(null);
-  rebuildTrayMenu();
-  notifyStateChanged();
-}
-
 function notifyStateChanged(): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send(
     IPC_CHANNELS.networkSwitcherStateChanged,
     currentState,
   );
+  notifySafetyStateChanged();
+}
+
+function safetyState(): ToolboxSafetyState {
+  const split = splitRoutingService?.getState() ?? currentState.splitRouting;
+  const wechatRecoveryPending = weChatAutoReplyService?.pendingRecovery ?? false;
+  return {
+    adapterBrokerActive: adapterRecoveryBroker?.isActive ?? false,
+    adapterBrokerProgress: adapterRecoveryBroker?.progress ?? { phase: 'idle', detail: null, canCancel: false },
+    helperDiagnostics: nativeHelperDiagnostics(),
+    adapterMutationsBlocked:
+      recoveryJournalLoadError !== null || adapterRecoveryBrokerError !== null || adapterRecoveryBroker?.progress?.phase === 'error' || recoveryHealth !== 'healthy' || split.pendingRecovery || wechatRecoveryPending,
+    chatGptProtected: protectedClientCheckSucceeded,
+    globalWebsiteNetworkWritesDisabled: !recoveryJournal?.splitRouting,
+    pendingRecoveryCount: pendingRestoreCount() +
+      Number(split.pendingRecovery && !recoveryJournal?.splitRouting) + Number(wechatRecoveryPending),
+    recoveryHealth,
+    splitRoutingStatus: split.status,
+    wechatDryRunOnly: true,
+    wechatRecoveryPending,
+    wechatStatus: weChatAutoReplyService?.getState().status ?? 'stopped',
+  };
+}
+
+function notifySafetyStateChanged(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send(
+    IPC_CHANNELS.safetyStateChanged,
+    safetyState(),
+  );
+}
+
+function notifySplitRoutingStateChanged(): void {
+  applyRecoveryMetadata();
+  rebuildTrayMenu();
+  notifyStateChanged();
+}
+
+function notifyWeChatAutoReplyStateChanged(
+  state: WeChatAutoReplyState,
+): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send(
+    IPC_CHANNELS.wechatAutoReplyStateChanged,
+    state,
+  );
+  notifySafetyStateChanged();
 }
 
 function stopConnectionMonitors(): void {
@@ -400,7 +480,10 @@ function rebuildTrayMenu(): void {
           void changeAdapterState(selected.id, 'enable').catch(showError);
       },
       enabled:
-        Boolean(selected) && selected?.enabled !== true && !operationInProgress,
+        Boolean(selected) &&
+        selected?.enabled !== true &&
+        !operationInProgress &&
+        !recoveryJournal?.splitRouting,
       label: labels.enable,
     },
     {
@@ -411,7 +494,8 @@ function rebuildTrayMenu(): void {
       enabled:
         Boolean(selected) &&
         selected?.enabled !== false &&
-        !operationInProgress,
+        !operationInProgress &&
+        !recoveryJournal?.splitRouting,
       label: labels.disable,
     },
     {
@@ -457,17 +541,19 @@ async function refreshState(): Promise<NetworkSwitcherState> {
 
   refreshInProgress = (async () => {
     const adapters = await listNetworkAdapters();
-    await reconcileTrackedChanges(adapters);
+    recoveryHealth = await recoveryJournalHealth(userDataDirectory);
+    try { await inspectProtectedNetworkClients(); protectedClientCheckSucceeded = true; }
+    catch { protectedClientCheckSucceeded = false; }
     const resolvedId = resolveSelectedAdapterId(adapters, selectedAdapterId);
     if (resolvedId !== selectedAdapterId) {
       selectedAdapterId = resolvedId;
-      await saveSelectedAdapterId(userDataDirectory, selectedAdapterId);
     }
 
     currentState = {
       adapters,
       pendingRestoreCount: pendingRestoreCount(),
       selectedAdapterId,
+      splitRouting: splitRoutingService?.getState() ?? currentState.splitRouting,
     };
     rebuildTrayMenu();
     return currentState;
@@ -481,6 +567,7 @@ async function refreshState(): Promise<NetworkSwitcherState> {
 async function selectAdapter(
   adapterId: string,
 ): Promise<NetworkSwitcherState> {
+  assertMutationAdmission();
   if (!isSafeAdapterId(adapterId))
     throw new Error('Invalid network adapter identifier.');
 
@@ -491,16 +578,130 @@ async function selectAdapter(
 
   selectedAdapterId = adapterId;
   currentState = { ...state, selectedAdapterId };
-  await saveSelectedAdapterId(userDataDirectory, selectedAdapterId);
   rebuildTrayMenu();
   notifyStateChanged();
   return currentState;
+}
+
+function requireSplitRoutingService(): SplitRoutingService {
+  if (!splitRoutingService) {
+    throw new Error('Split routing is not initialized.');
+  }
+  return splitRoutingService;
+}
+
+async function saveSplitRoutingSettings(
+  settings: unknown,
+): Promise<NetworkSwitcherState> {
+  assertMutationAdmission();
+  if (operationInProgress) {
+    throw new Error('Another network operation is still running.');
+  }
+  const service = requireSplitRoutingService();
+  await service.saveSettings(settings);
+  return refreshState();
+}
+
+async function preflightSplitRouting(
+  settings: unknown,
+  controllerSecret: unknown,
+): Promise<SplitRoutingPreflightResult> {
+  if (typeof controllerSecret !== 'string') {
+    throw new Error('Invalid FlClash controller secret.');
+  }
+  if (operationInProgress) {
+    throw new Error('Another network operation is still running.');
+  }
+  operationInProgress = true;
+  rebuildTrayMenu();
+  try {
+    const state = await refreshState();
+    return await requireSplitRoutingService().preflight(
+      settings,
+      controllerSecret,
+      state.adapters,
+    );
+  } finally {
+    operationInProgress = false;
+    rebuildTrayMenu();
+  }
+}
+
+async function activateSplitRouting(
+  settings: unknown,
+  controllerSecret: unknown,
+): Promise<NetworkSwitcherState> {
+  assertMutationAdmission();
+  if (typeof controllerSecret !== 'string') {
+    throw new Error('Invalid FlClash controller secret.');
+  }
+  if (operationInProgress) {
+    throw new Error('Another network operation is still running.');
+  }
+  stopConnectionMonitors();
+  operationInProgress = true;
+  rebuildTrayMenu();
+  try {
+    const state = await refreshState();
+    await requireSplitRoutingService().activate(
+      settings,
+      controllerSecret,
+      state.adapters,
+    );
+    return await refreshState();
+  } finally {
+    operationInProgress = false;
+    rebuildTrayMenu();
+    notifySplitRoutingStateChanged();
+  }
+}
+
+async function deactivateSplitRouting(
+  controllerSecret: unknown,
+): Promise<NetworkSwitcherState> {
+  if (typeof controllerSecret !== 'string') {
+    throw new Error('Invalid FlClash controller secret.');
+  }
+  if (operationInProgress) {
+    throw new Error('Another network operation is still running.');
+  }
+  stopConnectionMonitors();
+  operationInProgress = true;
+  rebuildTrayMenu();
+  try {
+    const restoringGlobalNetworking = Boolean(recoveryJournal?.splitRouting);
+    await requireSplitRoutingService().restore(controllerSecret);
+    // Isolated browsing never changes adapters. Only legacy global recovery
+    // needs a fresh Windows network scan before navigation can finish.
+    if (restoringGlobalNetworking) return await refreshState();
+    applyRecoveryMetadata();
+    return currentState;
+  } finally {
+    operationInProgress = false;
+    rebuildTrayMenu();
+    notifySplitRoutingStateChanged();
+  }
+}
+
+async function verifySplitRouting(): Promise<SplitRoutingVerificationResult> {
+  if (operationInProgress) {
+    throw new Error('Another network operation is still running.');
+  }
+  operationInProgress = true;
+  rebuildTrayMenu();
+  try {
+    return await requireSplitRoutingService().verifyPaths();
+  } finally {
+    operationInProgress = false;
+    rebuildTrayMenu();
+  }
 }
 
 async function changeAdapterState(
   adapterId: string,
   action: AdapterAction,
 ): Promise<NetworkSwitcherState> {
+  assertMutationAdmission();
   if (!isSafeAdapterId(adapterId))
     throw new Error('Invalid network adapter identifier.');
   if (!isAdapterAction(action)) throw new Error('Unsupported adapter action.');
@@ -509,12 +710,27 @@ async function changeAdapterState(
       'The recovery journal could not be loaded, so network changes are disabled.',
     );
   }
+  if (adapterRecoveryBrokerError) {
+    throw new Error(
+      `The independent adapter recovery broker needs attention: ${adapterRecoveryBrokerError.message}`,
+    );
+  }
+  if (recoveryJournal?.splitRouting) {
+    throw new Error('Restore split routing before changing adapter state.');
+  }
+  const split = splitRoutingService?.getState();
+  if (split && (split.pendingRecovery || split.status === 'active' || split.status === 'preparing' || split.status === 'restoring')) {
+    throw new Error('Close and clean up the isolated browser before changing its network adapters.');
+  }
   if (operationInProgress)
     throw new Error('Another network adapter operation is still running.');
 
   stopConnectionMonitors();
   operationInProgress = true;
   rebuildTrayMenu();
+  let brokerAttempted = false;
+  const previousJournal = recoveryJournal;
+  let journalRecorded = false;
   try {
     const state = await refreshState();
     const adapter = state.adapters.find(
@@ -523,8 +739,19 @@ async function changeAdapterState(
     if (!adapter)
       throw new Error('The selected network adapter no longer exists.');
 
+    const protectedClients = await inspectProtectedNetworkClients();
+    assertAdapterMutationIsSafe(
+      state.adapters,
+      adapter,
+      action,
+      protectedClients,
+    );
+
     const requestedEnabled = action === 'enable';
     if (adapter.enabled === requestedEnabled) return state;
+    if (!adapterRecoveryBroker) throw new Error('The independent adapter recovery broker is unavailable.');
+    await adapterRecoveryBroker.prepare();
+    assertMutationAdmission();
     const nextJournal = trackAdapterChange(
       recoveryJournal,
       adapter,
@@ -532,17 +759,24 @@ async function changeAdapterState(
       recoverySessionId,
     );
     await replaceRecoveryJournal(nextJournal);
+    journalRecorded = true;
     rebuildTrayMenu();
     notifyStateChanged();
 
     adapterMutationInFlight = true;
     try {
-      await setNetworkAdapterState(adapter, action);
+      if (!adapterRecoveryBroker) {
+        throw new Error('The independent adapter recovery broker is unavailable.');
+      }
+      if (cleanupInProgress || quitInProgress || windowCloseCleanupInProgress) {
+        throw new Error('Adapter startup was cancelled because the application is stopping.');
+      }
+      brokerAttempted = true;
+      await adapterRecoveryBroker.apply(nextJournal.adapters);
     } finally {
       adapterMutationInFlight = false;
     }
     selectedAdapterId = adapter.id;
-    await saveSelectedAdapterId(userDataDirectory, selectedAdapterId);
     await new Promise((resolve) => setTimeout(resolve, 500));
     const refreshed = await refreshState();
     notifyStateChanged();
@@ -555,7 +789,29 @@ async function changeAdapterState(
     }
     return refreshed;
   } catch (error) {
+    let recoveryConfirmed = false;
+    if (!brokerAttempted && journalRecorded) {
+      // Nothing was submitted to the broker. Undo only this request's intent,
+      // preserving all recovery evidence from earlier operations.
+      await replaceRecoveryJournal(previousJournal);
+    }
+    if (brokerAttempted && adapterRecoveryBroker) {
+      adapterRecoveryBrokerError =
+        error instanceof Error
+          ? error
+          : new Error('The independent adapter recovery broker failed.');
+      try {
+        await adapterRecoveryBroker.restore();
+        recoveryConfirmed = true;
+      } catch (recoveryError) {
+        console.warn('Independent adapter recovery remains pending:', recoveryError);
+      }
+    }
     try {
+      if (recoveryConfirmed) {
+        await reconcileTrackedChanges(await listNetworkAdapters());
+        if (pendingRestoreCount() === 0) adapterRecoveryBrokerError = null;
+      }
       await refreshState();
       notifyStateChanged();
     } catch (refreshError) {
@@ -571,8 +827,9 @@ async function changeAdapterState(
   }
 }
 
-async function restoreTrackedAdapterStates(): Promise<NetworkSwitcherState> {
-  if (recoveryJournalLoadError) throw recoveryJournalLoadError;
+async function restoreTrackedAdapterStates(
+  includeSplitRouting = true,
+): Promise<NetworkSwitcherState> {
   if (operationInProgress)
     throw new Error('Another network adapter operation is still running.');
 
@@ -580,31 +837,111 @@ async function restoreTrackedAdapterStates(): Promise<NetworkSwitcherState> {
   operationInProgress = true;
   rebuildTrayMenu();
   try {
+    const restorationErrors: Error[] = [];
+    if (includeSplitRouting && splitRoutingService) {
+      try { await requireSplitRoutingService().restore(); }
+      catch (error) { restorationErrors.push(error instanceof Error ? error : new Error(String(error))); }
+    }
+    let brokerRestoreError: Error | null = null;
+    let brokerRestored = false;
+    if (adapterRecoveryBroker) {
+      try {
+        // A failed UAC launch may leave a durable marker without a live pipe.
+        brokerRestored = await adapterRecoveryBroker.restore();
+        if (brokerRestored)
+          await new Promise((resolve) => setTimeout(resolve, 750));
+      } catch (error) {
+        brokerRestoreError =
+          error instanceof Error
+            ? error
+            : new Error('The independent recovery broker failed.');
+      }
+    }
+    // Corrupt user evidence must not prevent the isolated session or the
+    // independent, administrator-owned recovery store from being cleaned up.
+    if (recoveryJournalLoadError) {
+      throw new AggregateError([
+        ...restorationErrors,
+        ...(brokerRestoreError ? [brokerRestoreError] : []),
+        recoveryJournalLoadError,
+      ], 'Independent cleanup was attempted; the damaged recovery journal still needs attention.');
+    }
+    if (!brokerRestored && !brokerRestoreError && !adapterRecoveryBrokerError &&
+        restorationErrors.length === 0 && pendingRestoreCount() === 0) {
+      recoveryHealth = await recoveryJournalHealth(userDataDirectory);
+      if (recoveryHealth === 'healthy') {
+        // Nothing changed at the OS level. Restore the page's selection using
+        // its existing adapter list instead of launching seven PowerShell reads.
+        selectedAdapterId = resolveSelectedAdapterId(
+          currentState.adapters, await loadSelectedAdapterId(userDataDirectory),
+        );
+        currentState = { ...currentState, selectedAdapterId };
+        applyRecoveryMetadata();
+        rebuildTrayMenu();
+        notifyStateChanged();
+        return currentState;
+      }
+    }
     const state = await refreshState();
     const plan = buildRecoveryPlan(recoveryJournal, state.adapters);
     if (plan.actions.length > 0) {
-      await setNetworkAdapterStates(plan.actions);
+      // A one-shot elevated restore is the independent fallback for legacy
+      // journals or a broker that exited before it could acknowledge cleanup.
+      try {
+        await cleanupAll(plan.actions.map(change => () => setNetworkAdapterStates([change])));
+      } catch (error) {
+        const fallbackError =
+          error instanceof Error
+            ? error
+            : new Error('The one-shot adapter restore failed.');
+        if (brokerRestoreError) {
+          throw new AggregateError(
+            [brokerRestoreError, fallbackError],
+            'Both independent adapter recovery methods failed.',
+          );
+        }
+        throw fallbackError;
+      }
       await new Promise((resolve) => setTimeout(resolve, 750));
     }
 
+    if (brokerRestoreError) {
+      try {
+        if (!await adapterRecoveryBroker?.confirmRestored()) throw brokerRestoreError;
+      } catch (confirmationError) {
+        adapterRecoveryBrokerError = brokerRestoreError;
+        throw new AggregateError([brokerRestoreError, confirmationError],
+          'Adapter recovery is not yet confirmed. Original states have been retained.');
+      }
+    }
+    await reconcileTrackedChanges(await listNetworkAdapters());
     const refreshed = await refreshState();
     notifyStateChanged();
     if (refreshed.pendingRestoreCount > 0) {
-      const names =
-        recoveryJournal?.adapters
-          .map((record) => record.adapterName)
-          .join(', ') ?? '';
-      throw new Error(
+      const names = pendingRecoveryDetails().replaceAll('\n', ', ');
+      throw new AggregateError(
+        [
+          ...(brokerRestoreError ? [brokerRestoreError] : []),
+          new Error(
+            `Some network adapters are still awaiting recovery${names ? `: ${names}` : '.'}`,
+          ),
+        ],
         `Some network adapters are still awaiting recovery${names ? `: ${names}` : '.'}`,
       );
     }
+    adapterRecoveryBrokerError = null;
+    if (restorationErrors.length) throw new AggregateError(restorationErrors, restorationErrors.map(error => error.message).join('\n'));
+    await replaceRecoveryJournal(recoveryJournal);
+    selectedAdapterId = await loadSelectedAdapterId(userDataDirectory);
+    const restored = await refreshState();
+    notifyStateChanged();
     if (!quitInProgress) {
       for (const change of plan.actions) {
         if (change.action === 'enable')
           startConnectionMonitor(change.adapter.id);
       }
     }
-    return refreshed;
+    return restored;
   } catch (error) {
     try {
       await refreshState();
@@ -622,15 +959,110 @@ async function restoreTrackedAdapterStates(): Promise<NetworkSwitcherState> {
   }
 }
 
+function assertMutationAdmission(): void {
+  if (cleanupInProgress || quitInProgress || windowCloseCleanupInProgress) throw new Error('The application is stopping; new changes are refused.');
+  if (recoveryJournalLoadError || recoveryHealth !== 'healthy') throw new Error('Recovery evidence needs attention; new changes are refused.');
+  if (adapterRecoveryBrokerError) throw adapterRecoveryBrokerError;
+  if (adapterRecoveryBroker?.progress?.phase === 'error') throw new Error(adapterRecoveryBroker.progress.detail ?? 'The adapter connection needs recovery.');
+  if (splitRoutingService?.getState().pendingRecovery || weChatAutoReplyService?.pendingRecovery)
+    throw new Error('A component still has pending cleanup; retry recovery before starting new changes.');
+}
+
+function cleanupApplicationComponents(): Promise<void> {
+  if (cleanupInProgress) return cleanupInProgress;
+  adapterRecoveryBroker?.cancelPendingStart();
+  cleanupInProgress = cleanupAll([
+    async () => { await weChatAutoReplyService?.shutdown(); },
+    async () => {
+      const deadline = Date.now() + 130_000;
+      while (operationInProgress) {
+        if (Date.now() > deadline) throw new Error('A network operation did not settle; recovery remains pending.');
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      await restoreTrackedAdapterStates();
+    },
+  ]).finally(() => { cleanupInProgress = null; notifySafetyStateChanged(); });
+  return cleanupInProgress;
+}
+
 function registerIpcHandlers(): void {
+  ipcMain.handle(
+    IPC_CHANNELS.componentLeave,
+    async (event, component: unknown): Promise<void> => {
+      assertTrustedSender(event);
+      if (
+        component !== 'network-switcher' &&
+        component !== 'split-routing' &&
+        component !== 'wechat-auto-reply'
+      ) {
+        throw new Error('Invalid toolbox component identifier.');
+      }
+      if (cleanupInProgress || quitInProgress) throw new Error('Application cleanup is already in progress.');
+      if (component === 'wechat-auto-reply') {
+        if (!weChatAutoReplyService) {
+          throw new Error('WeChat Auto Reply is not initialized.');
+        }
+        await weChatAutoReplyService.stop();
+        return;
+      }
+      if (component === 'split-routing') {
+        await deactivateSplitRouting('');
+        return;
+      }
+      await restoreTrackedAdapterStates(false);
+    },
+  );
   ipcMain.handle(IPC_CHANNELS.getAppInfo, (event): ToolboxAppInfo => {
     assertTrustedSender(event);
     return { platform: 'win32', version: app.getVersion() };
+  });
+  ipcMain.handle(IPC_CHANNELS.safetyGetState, (event): ToolboxSafetyState => {
+    assertTrustedSender(event);
+    return safetyState();
   });
   ipcMain.handle(IPC_CHANNELS.networkSwitcherGetState, async (event) => {
     assertTrustedSender(event);
     return refreshState();
   });
+  ipcMain.handle(IPC_CHANNELS.networkSwitcherCancelAdapterOperation, (event) => {
+    assertTrustedSender(event);
+    adapterRecoveryBroker?.cancelPendingStart();
+  });
+  ipcMain.handle(
+    IPC_CHANNELS.networkSwitcherSaveSplitRoutingSettings,
+    async (event, settings: unknown) => {
+      assertTrustedSender(event);
+      return saveSplitRoutingSettings(settings);
+    },
+  );
+  ipcMain.handle(
+    IPC_CHANNELS.networkSwitcherPreflightSplitRouting,
+    async (event, settings: unknown, controllerSecret: unknown) => {
+      assertTrustedSender(event);
+      return preflightSplitRouting(settings, controllerSecret);
+    },
+  );
+  ipcMain.handle(
+    IPC_CHANNELS.networkSwitcherActivateSplitRouting,
+    async (event, settings: unknown, controllerSecret: unknown) => {
+      assertTrustedSender(event);
+      return activateSplitRouting(settings, controllerSecret);
+    },
+  );
+  ipcMain.handle(
+    IPC_CHANNELS.networkSwitcherDeactivateSplitRouting,
+    async (event, controllerSecret: unknown) => {
+      assertTrustedSender(event);
+      return deactivateSplitRouting(controllerSecret);
+    },
+  );
+  ipcMain.handle(
+    IPC_CHANNELS.networkSwitcherVerifySplitRouting,
+    async (event) => {
+      assertTrustedSender(event);
+      return verifySplitRouting();
+    },
+  );
   ipcMain.handle(
     IPC_CHANNELS.networkSwitcherRestoreAdapterStates,
     async (event) => {
@@ -658,6 +1090,60 @@ function registerIpcHandlers(): void {
       return changeAdapterState(adapterId, action);
     },
   );
+  ipcMain.handle(IPC_CHANNELS.wechatAutoReplyGetState, (event) => {
+    assertTrustedSender(event);
+    if (!weChatAutoReplyService)
+      throw new Error('WeChat Auto Reply is not initialized.');
+    return weChatAutoReplyService.getState();
+  });
+  ipcMain.handle(
+    IPC_CHANNELS.wechatAutoReplySaveSettings,
+    async (event, settings: unknown) => {
+      assertTrustedSender(event);
+      if (!weChatAutoReplyService)
+        throw new Error('WeChat Auto Reply is not initialized.');
+      assertMutationAdmission();
+      return weChatAutoReplyService.saveSettings(settings);
+    },
+  );
+  ipcMain.handle(
+    IPC_CHANNELS.wechatAutoReplyStart,
+    async (event, settings: unknown) => {
+      assertTrustedSender(event);
+      if (!weChatAutoReplyService)
+        throw new Error('WeChat Auto Reply is not initialized.');
+      assertMutationAdmission();
+      return weChatAutoReplyService.start(settings);
+    },
+  );
+  ipcMain.handle(IPC_CHANNELS.wechatAutoReplyStop, async (event) => {
+    assertTrustedSender(event);
+    if (!weChatAutoReplyService)
+      throw new Error('WeChat Auto Reply is not initialized.');
+    return weChatAutoReplyService.stop();
+  });
+}
+
+function stopWeChatAutoReplyForSafety(reason: string): void {
+  void cleanupApplicationComponents().catch((error: unknown) => {
+    console.warn(reason);
+    console.warn('Unable to stop WeChat Auto Reply safely:', error);
+  });
+}
+
+function registerWeChatSafetyHandlers(): void {
+  if (weChatSafetyHandlersRegistered) return;
+  weChatSafetyHandlersRegistered = true;
+  powerMonitor.on('lock-screen', () => {
+    stopWeChatAutoReplyForSafety(
+      'Auto reply stopped because Windows was locked. Start it manually when you return.',
+    );
+  });
+  powerMonitor.on('suspend', () => {
+    stopWeChatAutoReplyForSafety(
+      'Auto reply stopped because Windows entered sleep. Start it manually after resume.',
+    );
+  });
 }
 
 function isAllowedExternalUrl(rawUrl: string): boolean {
@@ -669,7 +1155,8 @@ function isAllowedExternalUrl(rawUrl: string): boolean {
       (url.href ===
         'https://github.com/Oriental-Cherry-N/cherry-toolbox' ||
         url.href ===
-          'https://github.com/Oriental-Cherry-N/cherry-toolbox/blob/main/LICENSE')
+          'https://github.com/Oriental-Cherry-N/cherry-toolbox/blob/main/LICENSE' ||
+        url.href === 'https://github.com/Hello-Mr-Crab/pywechat')
     );
   } catch {
     return false;
@@ -708,10 +1195,31 @@ function createMainWindow(): void {
   window.on('close', (event) => {
     if (isQuitting) return;
     event.preventDefault();
-    window.hide();
+    if (windowCloseCleanupInProgress) return;
+    windowCloseCleanupInProgress = true;
+    void (async () => {
+      try {
+        await cleanupApplicationComponents();
+        window.hide();
+      } catch (error) {
+        showError(error);
+      } finally {
+        windowCloseCleanupInProgress = false;
+      }
+    })();
   });
   window.on('closed', () => {
     if (mainWindow === window) mainWindow = null;
+  });
+  window.webContents.on('render-process-gone', () => {
+    void cleanupApplicationComponents().catch(showError);
+  });
+  window.webContents.on('unresponsive', () => {
+    void cleanupApplicationComponents().catch(showError);
+  });
+  window.on('query-session-end', event => {
+    event.preventDefault();
+    void cleanupApplicationComponents().catch(showError);
   });
   window.on('minimize', () => {
     window.hide();
@@ -771,9 +1279,9 @@ async function showRecoveryFailure(error: unknown): Promise<void> {
 async function handleRecoveryLoadFailure(): Promise<boolean> {
   if (!recoveryJournalLoadError) return true;
   const labels = recoveryDialogLabels();
-  const result = await dialog.showMessageBox({
-    buttons: [labels.discard, labels.quit],
-    cancelId: 1,
+  await dialog.showMessageBox({
+    buttons: [labels.cancel],
+    cancelId: 0,
     defaultId: 0,
     detail: errorMessage(recoveryJournalLoadError),
     message: labels.damagedMessage,
@@ -781,62 +1289,46 @@ async function handleRecoveryLoadFailure(): Promise<boolean> {
     title: labels.damagedTitle,
     type: 'error',
   });
-  if (result.response !== 0) return false;
-
-  await saveRecoveryJournal(userDataDirectory, null);
-  recoveryJournalLoadError = null;
+  // Never delete damaged recovery evidence.  The application continues in a
+  // read-only recovery-blocked mode; every mutating IPC checks this error.
   return true;
 }
 
-async function handleInterruptedRecovery(): Promise<void> {
-  if (pendingRestoreCount() === 0 || recoveryJournalLoadError) return;
+async function handleInterruptedRecovery(): Promise<boolean> {
+  if (pendingRestoreCount() === 0 || recoveryJournalLoadError) return true;
   const labels = recoveryDialogLabels();
-  const result = await dialog.showMessageBox({
-    buttons: [labels.restore, labels.keep, labels.later],
-    cancelId: 2,
+  await dialog.showMessageBox({
+    buttons: [labels.restore],
+    cancelId: 0,
     defaultId: 0,
-    detail:
-      recoveryJournal?.adapters
-        .map((record) => record.adapterName)
-        .join('\n') ?? '',
+    detail: pendingRecoveryDetails(),
     message: labels.crashMessage,
     noLink: true,
     title: labels.crashTitle,
     type: 'warning',
   });
-
-  if (result.response === 0) {
-    try {
-      await restoreTrackedAdapterStates();
-    } catch (error) {
-      await showRecoveryFailure(error);
-    }
-  } else if (result.response === 1) {
-    await discardRecoveryJournal();
+  try {
+    await restoreTrackedAdapterStates();
+  } catch (error) {
+    await showRecoveryFailure(error);
   }
+  return true;
 }
 
 async function requestApplicationQuit(): Promise<void> {
   if (quitApproved || quitInProgress) return;
-  if (operationInProgress) {
-    showError(
-      new Error(
-        'Wait for the current network adapter operation to finish before quitting.',
-      ),
-    );
-    return;
-  }
 
   quitInProgress = true;
   try {
     const labels = recoveryDialogLabels();
-    while (pendingRestoreCount() > 0) {
+    while (true) {
       try {
-        await restoreTrackedAdapterStates();
+        await cleanupApplicationComponents();
+        break;
       } catch (error) {
         const result = await dialog.showMessageBox({
-          buttons: [labels.retry, labels.keepAndExit, labels.cancel],
-          cancelId: 2,
+          buttons: [labels.retry, labels.cancel],
+          cancelId: 1,
           defaultId: 0,
           detail: errorMessage(error),
           message: labels.restoreFailedMessage,
@@ -845,10 +1337,6 @@ async function requestApplicationQuit(): Promise<void> {
           type: 'error',
         });
         if (result.response === 0) continue;
-        if (result.response === 1) {
-          await discardRecoveryJournal();
-          break;
-        }
         return;
       }
     }
@@ -882,6 +1370,30 @@ async function startApplication(): Promise<void> {
     app.getPath('userData'),
     'network-switcher',
   );
+  adapterRecoveryBroker = new AdapterRecoveryBroker(userDataDirectory, notifySafetyStateChanged);
+  try {
+    await adapterRecoveryBroker.recoverOrphanedSession();
+  } catch (error) {
+    adapterRecoveryBrokerError =
+      error instanceof Error
+        ? error
+        : new Error('The independent adapter recovery broker failed.');
+    console.error(
+      'The independent adapter recovery broker could not finish startup recovery:',
+      adapterRecoveryBrokerError,
+    );
+  }
+  weChatAutoReplyService = new WeChatAutoReplyService({
+    dataDirectory: path.join(
+      app.getPath('userData'),
+      'wechat-auto-reply',
+    ),
+    projectRoot: PROJECT_ROOT,
+    sourceMode: !app.isPackaged,
+    stateChanged: notifyWeChatAutoReplyStateChanged,
+  });
+  await weChatAutoReplyService.initialize();
+  registerWeChatSafetyHandlers();
   selectedAdapterId = await loadSelectedAdapterId(userDataDirectory);
   try {
     recoveryJournal = await loadRecoveryJournal(userDataDirectory);
@@ -895,6 +1407,15 @@ async function startApplication(): Promise<void> {
     app.quit();
     return;
   }
+  splitRoutingService = new SplitRoutingService({
+    dataDirectory: userDataDirectory,
+    getRecoveryJournal: () => recoveryJournal,
+    replaceRecoveryJournal,
+    sessionId: recoverySessionId,
+    stateChanged: notifySplitRoutingStateChanged,
+  });
+  await splitRoutingService.initialize();
+  applyRecoveryMetadata();
   registerIpcHandlers();
   createMainWindow();
   createTray();
@@ -902,7 +1423,7 @@ async function startApplication(): Promise<void> {
   try {
     await refreshState();
     notifyStateChanged();
-    await handleInterruptedRecovery();
+    if (!(await handleInterruptedRecovery())) return;
   } catch (error) {
     console.error('Unable to enumerate network adapters:', error);
   }
@@ -919,8 +1440,14 @@ if (isSquirrelStartup || !hasSingleInstanceLock) {
     event.preventDefault();
     void requestApplicationQuit();
   });
-  app.on('will-quit', stopConnectionMonitors);
+  app.on('will-quit', () => {
+    stopConnectionMonitors();
+  });
   app.on('activate', showMainWindow);
-  app.on('second-instance', showMainWindow);
+  app.on('second-instance', (_event, _arguments, _directory, data) => {
+    // The launcher checks ownership before releasing its build lock without unhiding a tray launch.
+    if (typeof data !== 'object' || data === null || !('sourceProbe' in data) ||
+        data.sourceProbe !== true || !('focus' in data) || data.focus !== false) showMainWindow();
+  });
   void app.whenReady().then(startApplication).catch(showError);
 }

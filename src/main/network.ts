@@ -33,6 +33,16 @@ interface CommandOptions {
   timeout: number;
 }
 
+interface StdinCommandOptions extends CommandOptions {
+  timeoutMessage: string;
+}
+
+interface StdinCommandResult {
+  exitCode: number | null;
+  stderr: string;
+  stdout: string;
+}
+
 interface ElevationPayload {
   action: AdapterAction;
   guid: string | null;
@@ -88,8 +98,67 @@ function runTextCommand(
   });
 }
 
+function runTextCommandFromStdin(
+  executable: string,
+  args: readonly string[],
+  input: string,
+  options: StdinCommandOptions,
+): Promise<StdinCommandResult> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(executable, [...args], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+    let outputBytes = 0;
+    let settled = false;
+    let stderr = '';
+    let stdout = '';
+    const finishWithError = (error: Error): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.kill();
+      reject(error);
+    };
+    const appendOutput = (target: 'stderr' | 'stdout', chunk: string): void => {
+      outputBytes += Buffer.byteLength(chunk, 'utf8');
+      if (outputBytes > MAX_OUTPUT_BYTES) {
+        finishWithError(new Error('The Windows command returned too much data.'));
+        return;
+      }
+      if (target === 'stderr') stderr += chunk;
+      else stdout += chunk;
+    };
+    const timer = setTimeout(
+      () => finishWithError(new Error(options.timeoutMessage)),
+      options.timeout,
+    );
+
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => appendOutput('stdout', chunk));
+    child.stderr.on('data', (chunk: string) => appendOutput('stderr', chunk));
+    child.on('error', (error) => finishWithError(error));
+    child.on('close', (exitCode) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ exitCode, stderr, stdout });
+    });
+    child.stdin.on('error', (error: NodeJS.ErrnoException) => {
+      if (error.code !== 'EPIPE') finishWithError(error);
+    });
+    child.stdin.end(input, 'utf8');
+  });
+}
+
 function encodePowerShell(script: string): string {
   return Buffer.from(script, 'utf16le').toString('base64');
+}
+
+function buildPowerShellStdinCommand(script: string): string {
+  const encodedScript = encodePowerShell(script);
+  return `$ErrorActionPreference = 'Stop'; try { $decodedScript = [System.Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('${encodedScript}')); & ([ScriptBlock]::Create($decodedScript)) } catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -307,19 +376,7 @@ export async function listNetworkAdapters(): Promise<NetworkAdapter[]> {
   }
 
   try {
-    const output = await runTextCommand(
-      windowsExecutable('powershell.exe'),
-      [
-        '-NoLogo',
-        '-NoProfile',
-        '-NonInteractive',
-        '-ExecutionPolicy',
-        'Bypass',
-        '-EncodedCommand',
-        encodePowerShell(LIST_ADAPTERS_SCRIPT),
-      ],
-      { timeout: QUERY_TIMEOUT_MS },
-    );
+    const output = await runPowerShellScript(LIST_ADAPTERS_SCRIPT);
     return parsePowerShellAdapters(output);
   } catch (powerShellError) {
     try {
@@ -381,79 +438,95 @@ foreach ($request in $requests) {
 `;
 }
 
-function runElevatedPowerShell(innerScript: string): Promise<void> {
+export function runElevatedPowerShell(innerScript: string): Promise<void> {
   const innerCommand = encodePowerShell(innerScript);
   const outerScript = String.raw`
 $ErrorActionPreference = 'Stop'
+$basePath = Join-Path ([IO.Path]::GetTempPath()) ('cherry-toolbox-' + [Guid]::NewGuid().ToString('N'))
+$resultPath = $basePath + '.result.txt'
+$exitCode = 1
 try {
+  $decodedScript = [System.Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('${innerCommand}'))
+  $encodedResult = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($resultPath))
+  $runner = '$ErrorActionPreference = ''Stop''; $resultPath = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(''' + $encodedResult + ''')); try { & { ' + $decodedScript + ' }; exit 0 } catch { [IO.File]::WriteAllText($resultPath, $_.Exception.Message); exit 1 }'
+  $encodedRunner = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($runner))
   $powershell = Join-Path $PSHOME 'powershell.exe'
-  $process = Start-Process -FilePath $powershell -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-EncodedCommand','${innerCommand}') -Verb RunAs -Wait -PassThru -WindowStyle Hidden
-  exit $process.ExitCode
+  $arguments = '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ' + $encodedRunner
+  if ($arguments.Length -gt 30000) { throw 'The legacy recovery command is too large for safe in-memory elevation.' }
+  $process = Start-Process -FilePath $powershell -ArgumentList $arguments -Verb RunAs -Wait -PassThru -WindowStyle Hidden
+  $exitCode = $process.ExitCode
+  if ($exitCode -ne 0 -and (Test-Path -LiteralPath $resultPath)) {
+    [Console]::Error.WriteLine([IO.File]::ReadAllText($resultPath))
+  }
 } catch {
   [Console]::Error.WriteLine($_.Exception.Message)
-  exit 1223
+  $nativeCode = $_.Exception.NativeErrorCode
+  $exitCode = if ($nativeCode -eq 1223) { 1223 } else { 1 }
+} finally {
+  Remove-Item -LiteralPath $resultPath -Force -ErrorAction SilentlyContinue
 }
+exit $exitCode
 `;
-
-  return new Promise((resolve, reject) => {
-    const child = spawn(
-      windowsExecutable('powershell.exe'),
-      [
-        '-NoLogo',
-        '-NoProfile',
-        '-NonInteractive',
-        '-ExecutionPolicy',
-        'Bypass',
-        '-EncodedCommand',
-        encodePowerShell(outerScript),
-      ],
-      { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true },
+  return runTextCommandFromStdin(
+    windowsExecutable('powershell.exe'),
+    [
+      '-NoLogo',
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-Command',
+      '-',
+    ],
+    buildPowerShellStdinCommand(outerScript),
+    {
+      timeout: ELEVATION_TIMEOUT_MS,
+      timeoutMessage: 'The administrator permission request timed out.',
+    },
+  ).then((result) => {
+    if (result.exitCode === 0) return;
+    if (result.exitCode === 1223) {
+      throw new Error('Administrator permission was not granted.');
+    }
+    throw new Error(
+      result.stderr.trim() ||
+        'Windows could not change the network adapter state.',
     );
-
-    let stderr = '';
-    let settled = false;
-    const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      child.kill();
-      reject(new Error('The administrator permission request timed out.'));
-    }, ELEVATION_TIMEOUT_MS);
-
-    child.stderr.setEncoding('utf8');
-    child.stderr.on('data', (chunk: string) => {
-      if (stderr.length < 8_192) stderr += chunk;
-    });
-    child.on('error', (error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      reject(
-        new Error(
-          'Windows could not start the administrator permission request.',
-          { cause: error },
-        ),
-      );
-    });
-    child.on('close', (exitCode) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (exitCode === 0) {
-        resolve();
-        return;
-      }
-      if (exitCode === 1223) {
-        reject(new Error('Administrator permission was not granted.'));
-        return;
-      }
-      const detail = stderr.trim();
-      reject(
-        new Error(
-          detail || 'Windows could not change the network adapter state.',
-        ),
-      );
-    });
+  }, (error: unknown) => {
+    if (error instanceof Error && error.message.includes('timed out')) {
+      throw error;
+    }
+    throw new Error(
+      'Windows could not start the administrator permission request.',
+      { cause: error },
+    );
   });
+}
+
+export async function runPowerShellScript(innerScript: string): Promise<string> {
+  const result = await runTextCommandFromStdin(
+    windowsExecutable('powershell.exe'),
+    [
+      '-NoLogo',
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-Command',
+      '-',
+    ],
+    buildPowerShellStdinCommand(innerScript),
+    {
+      timeout: QUERY_TIMEOUT_MS,
+      timeoutMessage: 'The Windows PowerShell command timed out.',
+    },
+  );
+  if (result.exitCode !== 0) {
+    throw new Error(
+      result.stderr.trim() || 'Windows PowerShell could not complete the command.',
+    );
+  }
+  return result.stdout;
 }
 
 export async function setNetworkAdapterState(

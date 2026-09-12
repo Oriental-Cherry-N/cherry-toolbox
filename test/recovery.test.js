@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { mkdtemp, readdir, rm, writeFile } = require('node:fs/promises');
+const { mkdtemp, readFile, readdir, rm, writeFile } = require('node:fs/promises');
 const { tmpdir } = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
@@ -10,6 +10,7 @@ const {
   reconcileRecoveryJournal,
   saveRecoveryJournal,
   trackAdapterChange,
+  recoveryJournalHealth,
 } = require('../dist/main/recovery.js');
 
 const WIFI_ID = 'guid:F67053B5-6802-4989-9869-6105783C240B';
@@ -99,6 +100,14 @@ test('recovery journal is written atomically, validated on load, and removable',
     );
     await saveRecoveryJournal(directory, journal);
     assert.deepEqual(await loadRecoveryJournal(directory), journal);
+    assert.deepEqual(
+      (await readdir(directory)).filter((name) => name.startsWith('recovery.v4')).sort(),
+      [
+        'recovery.v4.backup.json',
+        'recovery.v4.json',
+        'recovery.v4.previous.json',
+      ],
+    );
     assert.equal(
       (await readdir(directory)).some((name) => name.endsWith('.tmp')),
       false,
@@ -115,6 +124,36 @@ test('recovery journal is written atomically, validated on load, and removable',
 
     await saveRecoveryJournal(directory, null);
     assert.equal(await loadRecoveryJournal(directory), null);
+  });
+});
+
+test('a damaged primary recovery copy falls back to a verified redundant copy', async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const journal = trackAdapterChange(
+      null,
+      adapter(WIFI_ID, 'Wi-Fi', true),
+      false,
+      'session-1',
+      NOW,
+    );
+    await saveRecoveryJournal(directory, journal);
+    await writeFile(path.join(directory, 'recovery.v4.json'), '{broken', 'utf8');
+    assert.deepEqual(await loadRecoveryJournal(directory), journal);
+
+    await writeFile(
+      path.join(directory, 'recovery.v4.backup.json'),
+      '{broken',
+      'utf8',
+    );
+    await writeFile(
+      path.join(directory, 'recovery.v4.previous.json'),
+      '{broken',
+      'utf8',
+    );
+    await assert.rejects(
+      loadRecoveryJournal(directory),
+      /Every redundant recovery journal copy is damaged/,
+    );
   });
 });
 

@@ -19,21 +19,14 @@ if not exist "tsconfig.json" goto :invalid_project
 if not exist "tsconfig.renderer.json" goto :invalid_project
 if not exist "node_modules\typescript\lib\tsc.js" goto :missing_dependencies
 if not exist "node_modules\electron\dist\electron.exe" goto :missing_dependencies
+if not exist "%SystemRoot%\Microsoft.NET\Framework64\v4.0.30319\csc.exe" goto :missing_native_runtime
 
 if /I "%~1"=="--check" goto :check_ok
-if /I "%~1"=="--hidden" set "CT_ELECTRON_ARG=--hidden"
+if /I "%~1"=="--hidden" set "CT_ELECTRON_ARG=-Hidden"
 if not "%~1"=="" if /I not "%~1"=="--hidden" goto :invalid_argument
 
-echo [1/3] Compiling main process...
-"%CT_NODE%" "node_modules\typescript\lib\tsc.js" -p "tsconfig.json"
-if errorlevel 1 goto :build_failed
-
-echo [2/3] Compiling renderer...
-"%CT_NODE%" "node_modules\typescript\lib\tsc.js" -p "tsconfig.renderer.json"
-if errorlevel 1 goto :build_failed
-
-echo [3/3] Starting Cherry Toolbox...
-"node_modules\electron\dist\electron.exe" . %CT_ELECTRON_ARG%
+echo Checking the running instance before building...
+"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "scripts\build-source.ps1" -Mode Launch %CT_ELECTRON_ARG%
 set "CT_EXIT_CODE=%ERRORLEVEL%"
 popd
 
@@ -47,6 +40,18 @@ exit /b %CT_EXIT_CODE%
 :check_ok
 echo Source runtime is ready.
 echo Node: %CT_NODE%
+if exist "native\bin\mihomo.exe" (
+  echo Dedicated routing core: installed
+) else (
+  echo [WARNING] Dedicated routing core is missing.
+  echo Run: node scripts\setup-routing-core.cjs
+)
+if exist ".python-envs\wechat-auto-reply\python.exe" (
+  echo WeChat Auto Reply: ready
+) else (
+  echo [WARNING] WeChat Auto Reply environment is missing.
+  echo Run: powershell -ExecutionPolicy Bypass -File scripts\setup-wechat-auto-reply.ps1
+)
 popd
 exit /b 0
 
@@ -69,6 +74,12 @@ popd
 if not defined CT_NO_PAUSE pause
 exit /b 1
 
+:missing_native_runtime
+echo [ERROR] The Windows .NET Framework compiler is unavailable.
+popd
+if not defined CT_NO_PAUSE pause
+exit /b 1
+
 :invalid_argument
 echo [ERROR] Unsupported argument: %~1
 echo Usage: start-source.cmd [--hidden ^| --check]
@@ -78,7 +89,7 @@ exit /b 2
 
 :build_failed
 echo.
-echo [ERROR] TypeScript compilation failed. Review the messages above.
+echo [ERROR] Source build failed. Review the messages above.
 popd
 if not defined CT_NO_PAUSE pause
 exit /b 1

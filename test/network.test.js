@@ -7,11 +7,35 @@ const {
   parseNetshAdapters,
   parsePowerShellAdapters,
   resolveSelectedAdapterId,
+  runPowerShellScript,
   setNetworkAdapterStates,
 } = require('../dist/main/network.js');
 
 const WIFI_GUID = 'F67053B5-6802-4989-9869-6105783C240B';
 const ETHERNET_GUID = '0CEB962B-5463-4B13-B939-0993E29BCBEF';
+
+test('PowerShell runner accepts long multiline script blocks over stdin', async () => {
+  const padding = 'x'.repeat(40_000);
+  const output = await runPowerShellScript(
+    String.raw`
+$padding = '${padding}'
+$items = @(
+  1..2 |
+    ForEach-Object {
+      [PSCustomObject]@{
+        number = $_
+        paddingLength = $padding.Length
+      }
+    }
+)
+ConvertTo-Json -InputObject $items -Compress
+`,
+  );
+  assert.deepEqual(JSON.parse(output.trim()), [
+    { number: 1, paddingLength: 40_000 },
+    { number: 2, paddingLength: 40_000 },
+  ]);
+});
 
 test('PowerShell output is validated, normalized, and sorted', () => {
   const output = JSON.stringify([

@@ -50,6 +50,30 @@
             </svg>
             <span data-i18n="networkSwitcher">Network Switcher</span>
           </button>
+          <button
+            id="nav-split-routing"
+            class="navigation-item"
+            type="button"
+            aria-current="false"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 6h5l3 4 3-4h5M4 18h5l3-4 3 4h5" />
+              <path d="M12 10v4" />
+            </svg>
+            <span data-i18n="splitRouting">Split Routing</span>
+          </button>
+          <button
+            id="nav-wechat-auto-reply"
+            class="navigation-item"
+            type="button"
+            aria-current="false"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M21 12a8 8 0 0 1-8 8H7l-4 2 1.4-4.2A8.5 8.5 0 1 1 21 12Z" />
+              <path d="M8 12h.01M12 12h.01M16 12h.01" />
+            </svg>
+            <span data-i18n="wechatAutoReply">WeChat Auto Reply</span>
+          </button>
         </nav>
 
         <footer class="sidebar-footer">
@@ -74,6 +98,7 @@
       </aside>
 
       <main class="workspace">
+        <div id="component-transition" class="component-transition" role="status" aria-live="polite" hidden></div>
         <section id="view-home" class="tool-view home-view">
           <header class="home-hero">
             <div>
@@ -93,6 +118,21 @@
               aria-hidden="true"
             />
           </header>
+
+          <section class="safety-card" aria-labelledby="safety-heading">
+            <div>
+              <p class="section-label" data-i18n="safetyLabel">Safety center</p>
+              <h2 id="safety-heading" data-i18n="safetyTitle">Fail-closed protections</h2>
+            </div>
+            <div class="safety-grid">
+              <div><span data-i18n="safetyRecoveryLabel">Recovery journal</span><strong id="safety-recovery" class="safety-value">—</strong></div>
+              <div><span data-i18n="safetyBrokerLabel">Adapter watchdog</span><strong id="safety-broker" class="safety-value">—</strong></div>
+              <div><span data-i18n="safetyWebsiteLabel">Website proxy</span><strong id="safety-website" class="safety-value">—</strong></div>
+              <div><span data-i18n="safetyChatgptLabel">ChatGPT</span><strong id="safety-chatgpt" class="safety-value">—</strong></div>
+              <div><span data-i18n="safetyWechatLabel">WeChat automation</span><strong id="safety-wechat" class="safety-value">—</strong></div>
+            </div>
+            <p id="safety-detail" class="safety-detail" aria-live="polite"></p>
+          </section>
 
           <section aria-labelledby="tools-heading">
             <h2 id="tools-heading" class="content-heading" data-i18n="toolsHeading">
@@ -116,6 +156,56 @@
                   class="button button-primary tool-card-action"
                   type="button"
                   data-open-tool="network-switcher"
+                >
+                  <span data-i18n="openTool">Open tool</span>
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="m9 18 6-6-6-6" />
+                  </svg>
+                </button>
+              </article>
+
+              <article class="tool-card">
+                <div class="tool-card-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24">
+                    <path d="M4 6h5l3 4 3-4h5M4 18h5l3-4 3 4h5" />
+                    <path d="M12 10v4" />
+                  </svg>
+                </div>
+                <div class="tool-card-copy">
+                  <h3 data-i18n="splitCardTitle">Safe Website Proxy</h3>
+                  <p data-i18n="splitCardDescription">
+                    Proxy selected sites only inside a disposable browser; global settings and ChatGPT stay untouched.
+                  </p>
+                </div>
+                <button
+                  class="button button-primary tool-card-action"
+                  type="button"
+                  data-open-tool="split-routing"
+                >
+                  <span data-i18n="openTool">Open tool</span>
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="m9 18 6-6-6-6" />
+                  </svg>
+                </button>
+              </article>
+
+              <article class="tool-card">
+                <div class="tool-card-icon tool-card-icon-wechat" aria-hidden="true">
+                  <svg viewBox="0 0 24 24">
+                    <path d="M21 12a8 8 0 0 1-8 8H7l-4 2 1.4-4.2A8.5 8.5 0 1 1 21 12Z" />
+                    <path d="M8 12h.01M12 12h.01M16 12h.01" />
+                  </svg>
+                </div>
+                <div class="tool-card-copy">
+                  <h3 data-i18n="wechatCardTitle">WeChat Message Detection</h3>
+                  <p data-i18n="wechatCardDescription">
+                    Detection-only monitoring; this build has no live send path.
+                  </p>
+                </div>
+                <button
+                  class="button button-primary tool-card-action"
+                  type="button"
+                  data-open-tool="wechat-auto-reply"
                 >
                   <span data-i18n="openTool">Open tool</span>
                   <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -238,6 +328,17 @@
               </button>
             </div>
 
+            <div id="adapter-progress" class="recovery-panel" hidden>
+              <p id="adapter-progress-message" role="status" aria-live="polite"></p>
+              <button id="cancel-adapter-button" class="button button-secondary" type="button" data-i18n="cancelAdapterStart" hidden>Cancel startup</button>
+            </div>
+
+            <details id="helper-diagnostics" hidden>
+              <summary data-i18n="helperDiagnosticsTitle">Safety helper diagnostics</summary>
+              <p data-i18n="helperDiagnosticsHint">Select the text below and press Ctrl+C to copy it.</p>
+              <textarea id="helper-diagnostics-text" rows="9" readonly aria-label="Safety helper diagnostics"></textarea>
+            </details>
+
             <div
               id="feedback"
               class="feedback"
@@ -250,11 +351,329 @@
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20ZM12 10v6M12 7h.01" />
             </svg>
-            <p data-i18n="permissionNotice">
-              Windows asks for administrator permission only when an adapter is
-              changed.
+            <p data-i18n="adapterPermissionNotice">
+              Windows asks for administrator permission when an adapter state is changed.
             </p>
           </aside>
+        </section>
+
+        <section id="view-split-routing" class="tool-view" hidden>
+          <header class="module-header">
+            <p class="eyebrow" data-i18n="splitRoutingLabel">
+              App and website routing
+            </p>
+            <h1 data-i18n="splitRoutingTitle">Isolated browser + FlClash</h1>
+            <p class="module-subtitle" data-i18n="splitRoutingIntro">
+              Choose a mode for a separate temporary browser. Desktop clients, Windows proxy, routes, DNS and shared FlClash settings remain unchanged.
+            </p>
+          </header>
+
+          <section class="split-routing-card" aria-labelledby="split-routing-heading">
+            <div class="card-heading">
+              <div>
+                <p class="section-label" data-i18n="splitRoutingLabel">
+                  App and website routing
+                </p>
+                <h2 id="split-routing-heading" data-i18n="splitRoutingTitle">
+                  Isolated browser + FlClash
+                </h2>
+              </div>
+              <span id="split-status-badge" class="status-badge status-disabled">
+                <span class="status-dot" aria-hidden="true"></span>
+                <span id="split-status-label" data-i18n="splitStatusInactive">Inactive</span>
+              </span>
+            </div>
+
+            <p class="split-routing-intro" data-i18n="splitRoutingIntro">
+              Choose a mode for a separate temporary browser. Desktop clients, Windows proxy, routes, DNS and shared FlClash settings remain unchanged.
+            </p>
+
+            <label class="split-field" for="split-mode">
+              <span data-i18n="splitModeLabel">Browser mode</span>
+              <select id="split-mode">
+                <option value="sites" data-i18n="splitSitesMode">Selected websites</option>
+                <option value="chatgpt-web" data-i18n="splitChatgptMode">ChatGPT web</option>
+              </select>
+              <small id="split-mode-hint"></small>
+            </label>
+
+            <div class="split-adapter-grid">
+              <label class="split-field" for="split-primary-adapter">
+                <span data-i18n="splitPrimaryAdapter">Primary network (Ethernet)</span>
+                <select id="split-primary-adapter" disabled></select>
+              </label>
+              <label class="split-field" for="split-proxy-adapter">
+                <span data-i18n="splitProxyAdapter">Proxy network (WLAN)</span>
+                <select id="split-proxy-adapter" disabled></select>
+              </label>
+            </div>
+
+            <div class="split-presets">
+              <label class="split-check-control" for="split-ipinfo">
+                <input id="split-ipinfo" type="checkbox" checked />
+                <span>
+                  <strong>ipinfo.io</strong>
+                  <small data-i18n="splitIpinfoHint">Includes ipinfo.io and all subdomains</small>
+                </span>
+              </label>
+            </div>
+
+            <div class="split-form-grid">
+              <label class="split-field" for="split-custom-domains">
+                <span data-i18n="splitCustomDomains">Custom proxy domains</span>
+                <textarea
+                  id="split-custom-domains"
+                  rows="4"
+                  spellcheck="false"
+                  data-i18n-placeholder="splitCustomDomainsPlaceholder"
+                  placeholder="example.com&#10;service.example.org"
+                ></textarea>
+                <small data-i18n="splitCustomDomainsHint">One domain suffix per line; URLs and paths are rejected.</small>
+              </label>
+              <div class="split-controller-fields">
+                <label class="split-field" for="split-controller-port">
+                  <span data-i18n="splitControllerPort">FlClash controller port</span>
+                  <input id="split-controller-port" type="number" min="1" max="65535" value="9090" />
+                </label>
+                <label class="split-field" for="split-controller-secret">
+                  <span data-i18n="splitControllerSecret">Controller secret (session only)</span>
+                  <input id="split-controller-secret" type="password" autocomplete="off" />
+                </label>
+                <small class="split-controller-hint" data-i18n="splitControllerHint">
+                  FlClash must already be running with its controller bound to 127.0.0.1.
+                </small>
+              </div>
+            </div>
+
+            <div class="actions split-actions">
+              <button id="split-save-button" class="button button-secondary" type="button">
+                <span data-i18n="splitSave">Save settings</span>
+              </button>
+              <button id="split-preflight-button" class="button button-secondary" type="button">
+                <span data-i18n="splitPreflight">Run preflight</span>
+              </button>
+              <button id="split-activate-button" class="button button-primary" type="button">
+                <span data-i18n="splitActivate">Open isolated browser</span>
+              </button>
+              <button id="split-deactivate-button" class="button button-danger" type="button" disabled>
+                <span data-i18n="splitDeactivate">Close and erase session</span>
+              </button>
+              <button id="split-verify-button" class="button button-secondary" type="button" disabled>
+                <span data-i18n="splitVerify">Verify traffic paths</span>
+              </button>
+            </div>
+
+            <div id="split-diagnostics" class="split-diagnostics" hidden>
+              <strong data-i18n="splitDiagnostics">Current checks</strong>
+              <ul id="split-diagnostics-list"></ul>
+            </div>
+            <div id="split-verification" class="split-verification" hidden>
+              <strong data-i18n="splitVerificationTitle">Traffic path verification</strong>
+              <div class="split-verification-grid">
+                <div>
+                  <span data-i18n="splitVerificationDirect">Ordinary direct path</span>
+                  <strong id="split-verification-direct">—</strong>
+                </div>
+                <div>
+                  <span data-i18n="splitVerificationProxy">Selected-domain proxy path</span>
+                  <strong id="split-verification-proxy">—</strong>
+                </div>
+              </div>
+              <ul id="split-verification-list"></ul>
+            </div>
+            <div id="split-feedback" class="feedback" role="status" aria-live="polite"></div>
+          </section>
+
+          <aside class="notice">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20ZM12 10v6M12 7h.01" />
+            </svg>
+            <p data-i18n="permissionNotice">
+              Browser routing is limited to a disposable session and never requests administrator permission or changes global network settings.
+            </p>
+          </aside>
+        </section>
+
+        <section id="view-wechat-auto-reply" class="tool-view" hidden>
+          <header class="module-header wechat-module-header">
+            <div class="module-title-row">
+              <div>
+                <p class="eyebrow" data-i18n="wechatSourceOnly">
+                  Source-launch mode
+                </p>
+                <h1 data-i18n="wechatTitle">WeChat Message Detection</h1>
+              </div>
+              <span
+                id="wechat-status-badge"
+                class="status-badge wechat-status status-stopped"
+              >
+                <span class="status-dot" aria-hidden="true"></span>
+                <span id="wechat-status-label" data-i18n="wechatStatusStopped">
+                  Stopped
+                </span>
+              </span>
+            </div>
+            <p class="module-subtitle" data-i18n="wechatSubtitle">
+              Detect new items in an exact private-contact allowlist without sending messages.
+            </p>
+            <p id="wechat-version-target" class="version-target">
+              Configured for WeChat 4.1.12.26
+            </p>
+          </header>
+
+          <section class="wechat-settings-card" aria-label="WeChat Message Detection">
+            <div id="wechat-environment-panel" class="environment-panel">
+              <span class="environment-dot" aria-hidden="true"></span>
+              <div>
+                <strong id="wechat-environment-label" data-i18n="wechatEnvironmentMissing">
+                  Python environment is not installed
+                </strong>
+                <div id="wechat-setup-instructions" class="setup-instructions">
+                  <span data-i18n="wechatEnvironmentSetup">
+                    Run this once in PowerShell, then restart Cherry Toolbox:
+                  </span>
+                  <code>powershell -ExecutionPolicy Bypass -File scripts\setup-wechat-auto-reply.ps1</code>
+                </div>
+              </div>
+            </div>
+
+            <div class="wechat-form-grid">
+              <div class="field-group">
+                <label for="wechat-reply-text" data-i18n="wechatReplyLabel">
+                  Simulation text (never sent)
+                </label>
+                <textarea
+                  id="wechat-reply-text"
+                  rows="5"
+                  maxlength="2000"
+                  data-i18n-placeholder="wechatReplyPlaceholder"
+                  placeholder="Stored only for dry-run compatibility; this build cannot send it."
+                ></textarea>
+              </div>
+
+              <div class="field-group">
+                <label for="wechat-allowlist" data-i18n="wechatAllowlist">
+                  Auto-reply allowlist
+                </label>
+                <textarea
+                  id="wechat-allowlist"
+                  rows="5"
+                  placeholder="Alice&#10;Bob"
+                ></textarea>
+                <span class="field-hint" data-i18n="wechatAllowlistHint">
+                  One exact, unique WeChat contact remark per line; maximum 10.
+                </span>
+              </div>
+            </div>
+
+            <div class="wechat-safety-controls">
+              <label class="wechat-check-control" for="wechat-dry-run">
+                <input id="wechat-dry-run" type="checkbox" checked disabled />
+                <span>
+                  <strong data-i18n="wechatDryRunLabel">Dry run</strong>
+                  <small data-i18n="wechatDryRunHint">
+                    Safety mode is mandatory: detect incoming messages but never send anything.
+                  </small>
+                </span>
+              </label>
+
+              <label class="wechat-number-control" for="wechat-cooldown-minutes">
+                <span data-i18n="wechatCooldownLabel">Per-contact cooldown (minutes)</span>
+                <input
+                  id="wechat-cooldown-minutes"
+                  type="number"
+                  min="1"
+                  max="1440"
+                  step="1"
+                  value="30"
+                />
+                <small data-i18n="wechatCooldownHint">
+                  At most one reply per contact during this interval.
+                </small>
+              </label>
+
+              <label class="wechat-number-control" for="wechat-daily-limit">
+                <span data-i18n="wechatDailyLimitLabel">Daily reply limit</span>
+                <input
+                  id="wechat-daily-limit"
+                  type="number"
+                  min="1"
+                  max="100"
+                  step="1"
+                  value="20"
+                />
+                <small data-i18n="wechatDailyLimitHint">
+                  Stop sending after this many verified replies each day.
+                </small>
+              </label>
+            </div>
+
+            <div class="wechat-actions">
+              <button
+                id="wechat-save-button"
+                class="button button-secondary"
+                type="button"
+              >
+                <span data-i18n="wechatSave">Save settings</span>
+              </button>
+              <button
+                id="wechat-start-button"
+                class="button button-primary"
+                type="button"
+                disabled
+              >
+                <span data-i18n="wechatStart">Start detection</span>
+              </button>
+              <button
+                id="wechat-stop-button"
+                class="button button-danger"
+                type="button"
+                disabled
+              >
+                <span data-i18n="wechatStop">Stop detection</span>
+              </button>
+            </div>
+
+            <p id="wechat-last-activity" class="wechat-activity" data-i18n="wechatNoActivity">
+              No incoming messages detected in this run.
+            </p>
+            <div
+              id="wechat-feedback"
+              class="feedback wechat-feedback"
+              role="status"
+              aria-live="polite"
+            ></div>
+          </section>
+
+          <div class="wechat-notices">
+            <aside class="notice notice-panel">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20ZM12 10v6M12 7h.01" />
+              </svg>
+              <p data-i18n="wechatSafetyNotice">
+                Mandatory dry run: this build can detect and report but cannot send messages.
+              </p>
+            </aside>
+            <aside class="notice notice-panel">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 3v3M12 18v3M4.2 7.5l2.6 1.5M17.2 15l2.6 1.5M4.2 16.5 6.8 15M17.2 9l2.6-1.5" />
+              </svg>
+              <p data-i18n="wechatReliabilityNotice">
+                Initial binding may briefly take focus, then the previous window state is restored.
+              </p>
+            </aside>
+          </div>
+
+          <p class="upstream-credit">
+            <a
+              href="https://github.com/Hello-Mr-Crab/pywechat"
+              target="_blank"
+              rel="noopener noreferrer"
+              data-i18n="wechatPoweredBy"
+            >
+              Powered by pywechat / pyweixin
+            </a>
+          </p>
         </section>
       </main>
     </div>
